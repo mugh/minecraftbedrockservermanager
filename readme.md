@@ -45,6 +45,8 @@ The aplication will create a minecraft bedrock server using docker itzg/docker-m
 - Docker & Docker Compose installed
 - Node.js 18+ (if running as Node app)
 
+---
+
 ### Run As Node App
 Download the source  code
 
@@ -81,6 +83,7 @@ npm start
 ```
 **Access the application at: `http://localhost:3001`**
 
+---
 
 ### Run as Docker Container
 Download the source  code
@@ -91,7 +94,7 @@ docker-compose up -d
 
 # Access at: http://localhost:3001
 ```
-
+---
 
 ### File Manager Usage
 
@@ -196,6 +199,7 @@ The application includes password protection:
 - Session-based authentication
 - Mobile responsive design for all devices
 - Real-time updates without page refresh
+
 
 
 
