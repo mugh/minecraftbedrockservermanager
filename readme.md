@@ -191,7 +191,7 @@ The application includes password protection:
 - Real-time updates without page refresh
 
 ## [SUPPORT ME](https://sociabuzz.com/mughniy/donate)
-![enter image description here](https://storage.sociabuzz.com/storage/landingpage/img/sociabuzz-logo.png)
+
 
 
 
