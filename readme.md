@@ -47,7 +47,7 @@ The aplication will create a minecraft bedrock server using docker itzg/docker-m
 
 ---
 
-### Run As Node App
+### Installation
 Download the source  code
 
 #### 1. **Install Dependencies**
@@ -78,22 +78,11 @@ sudo chown $USER:$USER /opt/minecraft-servers #change this to your data director
 
 #### 4. **Start the Application**
 ```bash
-# Start the integrated server (frontend + backend)
+# Start the app (run on PM2)
 npm start
 ```
 **Access the application at: `http://localhost:3001`**
 
----
-
-### Run as Docker Container
-Download the source  code
-
-```bash
-# Start the complete application
-docker-compose up -d
-
-# Access at: http://localhost:3001
-```
 ---
 
 ### File Manager Usage
@@ -199,6 +188,7 @@ The application includes password protection:
 - Session-based authentication
 - Mobile responsive design for all devices
 - Real-time updates without page refresh
+
 
 
 
