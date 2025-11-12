@@ -12,7 +12,11 @@ const fsPromises = require('fs').promises;
 const multer = require('multer');
 
 const app = express();
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+// Cross-platform Docker configuration
+const dockerConfig = process.platform === 'win32'
+  ? { host: 'localhost', port: 2375 } // Windows Docker Desktop (ensure TCP is enabled)
+  : { socketPath: '/var/run/docker.sock' }; // Linux/Unix socket
+const docker = new Docker(dockerConfig);
 
 app.use(cors());
 app.use(express.json());
@@ -128,8 +132,6 @@ app.post('/api/servers', async (req, res) => {
       },
       Env: [
         'EULA=TRUE',
-        'ENABLE_RCON=true',
-        `RCON_PASSWORD=${process.env.RCON_PASSWORD || 'minecraft'}`,
         'GAMEMODE=survival',
         'DIFFICULTY=normal',
         'SERVER_NAME=' + name
