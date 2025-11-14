@@ -182,9 +182,8 @@ app.post('/api/servers', async (req, res) => {
     };
     await fs.writeJson(metadataPath, metadata, { spaces: 2 });
 
-    // Find available ports
+    // Find available port
     const gamePort = await findAvailablePort(19132);
-    const rconPort = await findAvailablePort(25575);
 
     // Create container
     const container = await docker.createContainer({
@@ -204,8 +203,7 @@ app.post('/api/servers', async (req, res) => {
       HostConfig: {
         Binds: [`${serverPath}:/data`],
         PortBindings: {
-          '19132/udp': [{ HostPort: gamePort.toString() }],
-          '19133/tcp': [{ HostPort: rconPort.toString() }]
+          '19132/udp': [{ HostPort: gamePort.toString() }]
         },
         RestartPolicy: {
           Name: 'unless-stopped'
@@ -221,7 +219,6 @@ app.post('/api/servers', async (req, res) => {
       name,
       version,
       gamePort,
-      rconPort,
       message: 'Server created successfully'
     });
   } catch (err) {
@@ -235,10 +232,81 @@ app.post('/api/servers/:id/start', async (req, res) => {
   try {
     const container = await getContainer(req.params.id);
     if (!container) return res.status(404).json({ error: 'Server not found' });
-    
-    await container.start();
-    res.json({ message: 'Server started' });
+
+    // Try to start the container first
+    try {
+      await container.start();
+      res.json({ message: 'Server started' });
+    } catch (startErr) {
+      // Check if it's a port conflict error
+      const errorMessage = startErr.message || '';
+      if (errorMessage.includes('port is already allocated') || errorMessage.includes('Bind for') || errorMessage.includes('failed programming external connectivity')) {
+        // Get container info
+        const containerInfo = await container.inspect();
+
+        // Find new available port
+        const newGamePort = await findAvailablePort(19132);
+
+        // Stop container if running (shouldn't be, but just in case)
+        if (containerInfo.State.Running) {
+          await container.stop();
+        }
+
+        // Remove old container
+        await container.remove();
+
+        // Create new container with updated port
+        const serverId = req.params.id;
+        const serverPath = getServerPath(serverId);
+
+        // Read metadata for server info
+        const metadataPath = path.join(serverPath, 'metadata.json');
+        let metadata = {};
+        if (await fs.pathExists(metadataPath)) {
+          metadata = await fs.readJson(metadataPath);
+        }
+
+        const newContainer = await docker.createContainer({
+          Image: BEDROCK_IMAGE,
+          name: serverId,
+          Labels: {
+            'server-id': serverId,
+            'server-name': metadata.name || serverId
+          },
+          Env: [
+            'EULA=TRUE',
+            'VERSION=' + (metadata.version || 'LATEST'),
+            'GAMEMODE=survival',
+            'DIFFICULTY=normal',
+            'SERVER_NAME=' + (metadata.name || serverId)
+          ],
+          HostConfig: {
+            Binds: [`${serverPath}:/data`],
+            PortBindings: {
+              '19132/udp': [{ HostPort: newGamePort.toString() }]
+            },
+            RestartPolicy: {
+              Name: 'unless-stopped'
+            },
+            Memory: containerInfo.HostConfig.Memory || 2 * 1024 * 1024 * 1024 // 2GB
+          }
+        });
+
+        // Start the new container
+        await newContainer.start();
+
+        res.json({
+          message: 'Server started with updated port due to port conflict',
+          gamePort: newGamePort,
+          portsUpdated: true
+        });
+      } else {
+        // Re-throw non-port related errors
+        throw startErr;
+      }
+    }
   } catch (err) {
+    console.error('Error starting server:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -316,9 +384,8 @@ app.post('/api/servers/:id/rename', async (req, res) => {
     // Remove container
     await container.remove();
 
-    // Find available ports (reuse existing if possible)
+    // Find available port (reuse existing if possible)
     const gamePort = containerInfo.HostConfig.PortBindings['19132/udp']?.[0]?.HostPort || await findAvailablePort(19132);
-    const rconPort = containerInfo.HostConfig.PortBindings['19133/tcp']?.[0]?.HostPort || await findAvailablePort(25575);
 
     // Create new container with updated server name
     const newContainer = await docker.createContainer({
@@ -338,8 +405,7 @@ app.post('/api/servers/:id/rename', async (req, res) => {
       HostConfig: {
         Binds: [`${serverPath}:/data`],
         PortBindings: {
-          '19132/udp': [{ HostPort: gamePort.toString() }],
-          '19133/tcp': [{ HostPort: rconPort.toString() }]
+          '19132/udp': [{ HostPort: gamePort.toString() }]
         },
         RestartPolicy: {
           Name: 'unless-stopped'
@@ -407,9 +473,8 @@ app.post('/api/servers/:id/version', async (req, res) => {
     metadata.updatedAt = new Date().toISOString();
     await fs.writeJson(metadataPath, metadata, { spaces: 2 });
 
-    // Find available ports (reuse existing if possible)
+    // Find available port (reuse existing if possible)
     const gamePort = containerInfo.HostConfig.PortBindings['19132/udp']?.[0]?.HostPort || await findAvailablePort(19132);
-    const rconPort = containerInfo.HostConfig.PortBindings['19133/tcp']?.[0]?.HostPort || await findAvailablePort(25575);
 
     // Create new container with updated version
     const newContainer = await docker.createContainer({
@@ -429,8 +494,7 @@ app.post('/api/servers/:id/version', async (req, res) => {
       HostConfig: {
         Binds: [`${serverPath}:/data`],
         PortBindings: {
-          '19132/udp': [{ HostPort: gamePort.toString() }],
-          '19133/tcp': [{ HostPort: rconPort.toString() }]
+          '19132/udp': [{ HostPort: gamePort.toString() }]
         },
         RestartPolicy: {
           Name: 'unless-stopped'
@@ -1205,21 +1269,66 @@ function formatUptime(startedAt) {
   return `${hours}h ${mins}m`;
 }
 
-async function findAvailablePort(startPort) {
-  const containers = await docker.listContainers({ all: true });
-  const usedPorts = new Set();
-  
-  containers.forEach(c => {
-    c.Ports.forEach(p => {
-      if (p.PublicPort) usedPorts.add(p.PublicPort);
+async function isPortAvailable(port) {
+  const net = require('net');
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.listen(port, '0.0.0.0', () => {
+      server.close(() => resolve(true));
+    });
+    server.on('error', () => {
+      resolve(false);
     });
   });
-  
+}
+
+async function findAvailablePort(startPort) {
+  const net = require('net');
+
+  // First, get all currently allocated ports from running containers
+  const containers = await docker.listContainers({ all: false }); // Only running containers
+  const allocatedPorts = new Set();
+
+  containers.forEach(c => {
+    c.Ports.forEach(p => {
+      if (p.PublicPort) {
+        allocatedPorts.add(p.PublicPort);
+      }
+    });
+  });
+
   let port = startPort;
-  while (usedPorts.has(port)) {
-    port++;
+  while (true) {
+    // Check if port is allocated by running containers
+    if (allocatedPorts.has(port)) {
+      port++;
+      continue;
+    }
+
+    // Check if port can be bound by testing listen
+    try {
+      await new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.listen(port, '0.0.0.0', () => {
+          server.close(() => resolve());
+        });
+        server.on('error', (err) => {
+          if (err.code === 'EADDRINUSE') {
+            reject(new Error('Port in use'));
+          } else {
+            reject(err);
+          }
+        });
+      });
+      return port;
+    } catch (err) {
+      if (err.message === 'Port in use') {
+        port++;
+        continue;
+      }
+      throw err;
+    }
   }
-  return port;
 }
 
 // Serve login configuration
