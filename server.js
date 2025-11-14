@@ -1,5 +1,5 @@
 // server.js - Minecraft Bedrock Server Manager Backend
-// npm install express cors dockerode archiver fs-extra unzipper dotenv multer
+// npm install express cors dockerode archiver fs-extra unzipper dotenv multer socket.io
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -10,8 +10,22 @@ const archiver = require('archiver');
 const unzipper = require('unzipper');
 const fsPromises = require('fs').promises;
 const multer = require('multer');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true, // Support older Socket.IO clients
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+
 // Cross-platform Docker configuration
 const dockerConfig = process.platform === 'win32'
   ? { host: 'localhost', port: 2375 } // Windows Docker Desktop (ensure TCP is enabled)
@@ -142,6 +156,7 @@ app.get('/api/servers', async (req, res) => {
       return {
         id: serverId,
         name: serverName,
+        containerName: c.Names[0].replace('/', ''),
         version: serverVersion,
         status: c.State,
         players: playerCount,
@@ -196,8 +211,6 @@ app.post('/api/servers', async (req, res) => {
       Env: [
         'EULA=TRUE',
         'VERSION=' + version,
-        'GAMEMODE=survival',
-        'DIFFICULTY=normal',
         'SERVER_NAME=' + name
       ],
       HostConfig: {
@@ -213,6 +226,9 @@ app.post('/api/servers', async (req, res) => {
     });
 
     await container.start();
+
+    // Broadcast server update
+    setTimeout(() => broadcastServerUpdate(serverId), 2000); // Wait for container to fully start
 
     res.json({
       id: serverId,
@@ -236,6 +252,8 @@ app.post('/api/servers/:id/start', async (req, res) => {
     // Try to start the container first
     try {
       await container.start();
+      // Broadcast server update
+      setTimeout(() => broadcastServerUpdate(req.params.id), 2000);
       res.json({ message: 'Server started' });
     } catch (startErr) {
       // Check if it's a port conflict error
@@ -276,8 +294,6 @@ app.post('/api/servers/:id/start', async (req, res) => {
           Env: [
             'EULA=TRUE',
             'VERSION=' + (metadata.version || 'LATEST'),
-            'GAMEMODE=survival',
-            'DIFFICULTY=normal',
             'SERVER_NAME=' + (metadata.name || serverId)
           ],
           HostConfig: {
@@ -316,8 +332,10 @@ app.post('/api/servers/:id/stop', async (req, res) => {
   try {
     const container = await getContainer(req.params.id);
     if (!container) return res.status(404).json({ error: 'Server not found' });
-    
+
     await container.stop();
+    // Broadcast server update
+    setTimeout(() => broadcastServerUpdate(req.params.id), 1000);
     res.json({ message: 'Server stopped' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -329,8 +347,10 @@ app.post('/api/servers/:id/restart', async (req, res) => {
   try {
     const container = await getContainer(req.params.id);
     if (!container) return res.status(404).json({ error: 'Server not found' });
-    
+
     await container.restart();
+    // Broadcast server update
+    setTimeout(() => broadcastServerUpdate(req.params.id), 3000);
     res.json({ message: 'Server restarted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -367,6 +387,9 @@ app.post('/api/servers/:id/rename', async (req, res) => {
     // Save metadata
     await fs.writeJson(metadataPath, metadata, { spaces: 2 });
 
+    // Broadcast server list update to all connected clients
+    broadcastServerUpdate();
+
     // Get current container info
     const container = await getContainer(serverId);
     if (!container) {
@@ -398,8 +421,6 @@ app.post('/api/servers/:id/rename', async (req, res) => {
       Env: [
         'EULA=TRUE',
         'VERSION=' + (metadata.version || 'LATEST'),
-        'GAMEMODE=survival',
-        'DIFFICULTY=normal',
         'SERVER_NAME=' + name.trim()
       ],
       HostConfig: {
@@ -418,6 +439,9 @@ app.post('/api/servers/:id/rename', async (req, res) => {
     if (wasRunning) {
       await newContainer.start();
     }
+
+    // Broadcast server update
+    setTimeout(() => broadcastServerUpdate(serverId), wasRunning ? 3000 : 1000);
 
     res.json({
       message: 'Server renamed successfully',
@@ -487,8 +511,6 @@ app.post('/api/servers/:id/version', async (req, res) => {
       Env: [
         'EULA=TRUE',
         'VERSION=' + version.trim(),
-        'GAMEMODE=survival',
-        'DIFFICULTY=normal',
         'SERVER_NAME=' + metadata.name
       ],
       HostConfig: {
@@ -507,6 +529,9 @@ app.post('/api/servers/:id/version', async (req, res) => {
     if (wasRunning) {
       await newContainer.start();
     }
+
+    // Broadcast server update
+    setTimeout(() => broadcastServerUpdate(serverId), wasRunning ? 5000 : 1000); // Longer wait for version updates
 
     res.json({
       message: 'Server version updated successfully',
@@ -552,7 +577,10 @@ async function handleDeleteServer(req, res) {
     
     const serverPath = getServerPath(req.params.id);
     await fs.remove(serverPath);
-    
+
+    // Broadcast server update (server list changed)
+    setTimeout(() => broadcastServerUpdate(), 1000);
+
     res.json({ message: 'Server deleted' });
   } catch (err) {
     console.error('Error in handleDeleteServer:', err);
@@ -607,8 +635,11 @@ app.post('/api/servers/:id/command', async (req, res) => {
       stream.on('end', resolve);
       stream.on('error', reject);
     });
-    
-    res.json({ 
+
+    // Broadcast server details update (logs may have changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 1000);
+
+    res.json({
       response: output || 'Command sent successfully. Check server logs for output.',
       message: 'Command executed via send-command script'
     });
@@ -768,6 +799,8 @@ app.post('/api/servers/:id/players/:playerName/kick', async (req, res) => {
     });
     
     await exec.start();
+    // Broadcast server details update (players may have changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 1000);
     res.json({ message: `Player ${playerName} kicked` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -790,6 +823,8 @@ app.post('/api/servers/:id/players/:playerName/ban', async (req, res) => {
     });
     
     await exec.start();
+    // Broadcast server details update (players may have changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 1000);
     res.json({ message: `Player ${playerName} banned` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -810,6 +845,8 @@ app.post('/api/servers/:id/players/:playerName/op', async (req, res) => {
     });
     
     await exec.start();
+    // Broadcast server details update (player permissions changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 1000);
     res.json({ message: `Player ${playerName} is now an operator` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -830,6 +867,8 @@ app.post('/api/servers/:id/players/:playerName/deop', async (req, res) => {
     });
     
     await exec.start();
+    // Broadcast server details update (player permissions changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 1000);
     res.json({ message: `Player ${playerName} is no longer an operator` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1227,7 +1266,10 @@ app.put('/api/servers/:id/config', async (req, res) => {
     
     const lines = Object.entries(req.body).map(([key, value]) => `${key}=${value}`);
     await fs.writeFile(configPath, lines.join('\n'));
-    
+
+    // Broadcast server details update (config changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 500);
+
     res.json({ message: 'Configuration saved' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1688,8 +1730,11 @@ app.post('/api/servers/:id/addons/:type/:name/toggle', async (req, res) => {
     
     // Save config
     await fs.writeJson(configFile, packs, { spaces: 2 });
-    
-    res.json({ 
+
+    // Broadcast server details update (addons changed)
+    setTimeout(() => broadcastServerDetails(req.params.id), 500);
+
+    res.json({
       message: packIndex >= 0 ? 'Addon disabled' : 'Addon enabled',
       enabled: packIndex < 0
     });
@@ -1818,6 +1863,8 @@ app.post('/api/servers/:id/worlds/:worldName/enable', async (req, res) => {
       const info = await container.inspect();
       if (info.State.Running) {
         await container.restart();
+        // Broadcast server update after restart
+        setTimeout(() => broadcastServerUpdate(id), 5000);
       }
     }
 
@@ -1869,9 +1916,326 @@ app.delete('/api/servers/:id/worlds/:worldName', async (req, res) => {
 
 // ==================== END ADDON MANAGEMENT ====================
 
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  // Send initial data to new client
+  socket.on('request-initial-data', async () => {
+    try {
+      const containers = await docker.listContainers({ all: true });
+      const bedrockServers = containers.filter(c =>
+        c.Image.includes(BEDROCK_IMAGE) && c.Labels['server-id']
+      );
+
+      const servers = await Promise.all(bedrockServers.map(async c => {
+        const container = docker.getContainer(c.Id);
+        const info = await container.inspect();
+        const serverId = c.Labels['server-id'];
+        const serverPath = getServerPath(serverId);
+
+        let serverName = c.Labels['server-name'] || serverId;
+        let serverVersion = 'LATEST';
+        try {
+          const metadataPath = path.join(serverPath, 'metadata.json');
+          if (await fs.pathExists(metadataPath)) {
+            const metadata = await fs.readJson(metadataPath);
+            if (metadata.name) serverName = metadata.name;
+            if (metadata.version) serverVersion = metadata.version;
+          }
+        } catch (err) {}
+
+        let worldSize = '0 MB';
+        try {
+          const worldPath = path.join(serverPath, 'worlds');
+          if (await fs.pathExists(worldPath)) {
+            const size = await getDirectorySize(worldPath);
+            worldSize = formatBytes(size);
+          }
+        } catch (err) {}
+
+        return {
+          id: serverId,
+          name: serverName,
+          version: serverVersion,
+          status: c.State,
+          players: 0, // Will be updated separately
+          maxPlayers: 10,
+          uptime: info.State.Running ? formatUptime(info.State.StartedAt) : '0h 0m',
+          memory: formatBytes(info.HostConfig.Memory || 0),
+          cpu: '0%',
+          worldSize: worldSize,
+          ports: c.Ports,
+          webPort: PORT
+        };
+      }));
+
+      socket.emit('servers-update', servers);
+    } catch (err) {
+      console.error('Error sending initial data:', err);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Helper function to broadcast server updates
+async function broadcastServerUpdate(serverId = null) {
+  try {
+    const containers = await docker.listContainers({ all: true });
+    const bedrockServers = containers.filter(c =>
+      c.Image.includes(BEDROCK_IMAGE) && c.Labels['server-id']
+    );
+
+    const servers = await Promise.all(bedrockServers.map(async c => {
+      const container = docker.getContainer(c.Id);
+      const info = await container.inspect();
+      const currentServerId = c.Labels['server-id'];
+      const serverPath = getServerPath(currentServerId);
+
+      let serverName = c.Labels['server-name'] || currentServerId;
+      let serverVersion = 'LATEST';
+      try {
+        const metadataPath = path.join(serverPath, 'metadata.json');
+        if (await fs.pathExists(metadataPath)) {
+          const metadata = await fs.readJson(metadataPath);
+          if (metadata.name) serverName = metadata.name;
+          if (metadata.version) serverVersion = metadata.version;
+        }
+      } catch (err) {}
+
+      let worldSize = '0 MB';
+      try {
+        const worldPath = path.join(serverPath, 'worlds');
+        if (await fs.pathExists(worldPath)) {
+          const size = await getDirectorySize(worldPath);
+          worldSize = formatBytes(size);
+        }
+      } catch (err) {}
+
+      let playerCount = 0;
+      if (c.State === 'running') {
+        try {
+          const exec = await container.exec({
+            Cmd: ['send-command', 'list'],
+            AttachStdout: true,
+            AttachStderr: true
+          });
+          await exec.start();
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const logs = await container.logs({
+            stdout: true,
+            stderr: true,
+            tail: 20
+          });
+          const logText = logs.toString();
+          const lines = logText.trim().split('\n');
+          let lastIndex = -1;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes('players online:')) {
+              lastIndex = i;
+            }
+          }
+          if (lastIndex >= 0) {
+            for (let i = lastIndex + 1; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (line.startsWith('[') || line.startsWith('>') || line.includes('AutoCompaction') || line === '') {
+                break;
+              }
+              if (line) playerCount++;
+            }
+          }
+        } catch (err) {}
+      }
+
+      let maxPlayers = 10;
+      try {
+        const configPath = path.join(serverPath, 'server.properties');
+        if (await fs.pathExists(configPath)) {
+          const content = await fs.readFile(configPath, 'utf8');
+          const maxPlayersMatch = content.match(/max-players=(\d+)/);
+          if (maxPlayersMatch) {
+            maxPlayers = parseInt(maxPlayersMatch[1]);
+          }
+        }
+      } catch (err) {}
+
+      return {
+        id: currentServerId,
+        name: serverName,
+        containerName: c.Names[0].replace('/', ''),
+        version: serverVersion,
+        status: c.State,
+        players: playerCount,
+        maxPlayers: maxPlayers,
+        uptime: info.State.Running ? formatUptime(info.State.StartedAt) : '0h 0m',
+        memory: formatBytes(info.HostConfig.Memory || 0),
+        cpu: '0%',
+        worldSize: worldSize,
+        ports: c.Ports,
+        webPort: PORT
+      };
+    }));
+
+    io.emit('servers-update', servers);
+
+    // If specific server updated, also emit detailed data
+    if (serverId) {
+      await broadcastServerDetails(serverId);
+    }
+  } catch (err) {
+    console.error('Error broadcasting server update:', err);
+  }
+}
+
+// Helper function to broadcast server details
+async function broadcastServerDetails(serverId) {
+  try {
+    const container = await getContainer(serverId);
+    if (!container) return;
+
+    // Get logs
+    const logs = await container.logs({
+      stdout: true,
+      stderr: true,
+      tail: 100
+    });
+    const logLines = logs.toString().split('\n').filter(l => l.trim());
+
+    // Get players
+    let players = [];
+    if (container) {
+      const containerInfo = await container.inspect();
+      if (containerInfo.State.Status === 'running') {
+        let logs;
+        try {
+          const exec = await container.exec({
+            Cmd: ['send-command', 'list'],
+            AttachStdout: true,
+            AttachStderr: true
+          });
+          await exec.start();
+          await new Promise(resolve => setTimeout(resolve, 500));
+          logs = await container.logs({
+            stdout: true,
+            stderr: true,
+            tail: 20
+          });
+        } catch (err) {
+          return;
+        }
+
+        const logText = logs.toString();
+        const lines = logText.trim().split('\n');
+        const players_temp = [];
+
+        let lastIndex = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes('players online:')) {
+            lastIndex = i;
+          }
+        }
+
+        if (lastIndex >= 0) {
+          for (let i = lastIndex + 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line.startsWith('[') || line.startsWith('>') || line.includes('AutoCompaction') || line === '') {
+              break;
+            }
+            if (line) {
+              const names = line.split(',').map(n => n.replace(/[^\x20-\x7E]/g, '').trim()).filter(n => n);
+              players_temp.push(...names.map(name => ({ name })));
+            }
+          }
+        }
+
+        // Get player cache and XUIDs
+        let playerCache = {};
+        const cachePath = path.join(getServerPath(serverId), 'player_cache.json');
+        try {
+          if (await fs.pathExists(cachePath)) {
+            const cacheContent = await fs.readFile(cachePath, 'utf8');
+            playerCache = JSON.parse(cacheContent);
+          }
+        } catch (err) {}
+
+        for (const player of players_temp) {
+          if (playerCache[player.name]) {
+            player.xuid = playerCache[player.name];
+          } else {
+            try {
+              const response = await fetch(`https://mcprofile.io/api/v1/bedrock/gamertag/${encodeURIComponent(player.name)}`);
+              if (response.ok) {
+                const data = await response.json();
+                player.xuid = data.xuid || null;
+                playerCache[player.name] = player.xuid;
+              } else {
+                player.xuid = null;
+              }
+            } catch (err) {
+              player.xuid = null;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+
+        try {
+          await fs.writeJson(cachePath, playerCache, { spaces: 2 });
+        } catch (err) {}
+
+        // Check operators
+        let permissions = [];
+        try {
+          const permissionsPath = path.join(getServerPath(serverId), 'permissions.json');
+          if (await fs.pathExists(permissionsPath)) {
+            const permissionsContent = await fs.readFile(permissionsPath, 'utf8');
+            permissions = JSON.parse(permissionsContent);
+          }
+        } catch (err) {}
+
+        const operatorXuids = permissions.filter(p => p.permission === 'operator').map(p => p.xuid);
+        players_temp.forEach(player => {
+          player.isOperator = player.xuid && operatorXuids.includes(player.xuid);
+        });
+
+        players = players_temp;
+      }
+    }
+
+    // Get config
+    let config = {};
+    try {
+      const serverPath = getServerPath(serverId);
+      const configPath = path.join(serverPath, 'server.properties');
+      if (await fs.pathExists(configPath)) {
+        const content = await fs.readFile(configPath, 'utf8');
+        content.split('\n').forEach(line => {
+          if (line.trim() && !line.startsWith('#')) {
+            const [key, value] = line.split('=');
+            if (key && value !== undefined) {
+              config[key.trim()] = value.trim();
+            }
+          }
+        });
+      }
+    } catch (err) {}
+
+    io.emit('server-details-update', {
+      serverId,
+      logs: logLines,
+      players,
+      config
+    });
+  } catch (err) {
+    console.error('Error broadcasting server details:', err);
+  }
+}
+
 // Start server
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Bedrock Server Manager API running on port ${PORT}`);
   console.log('Login configuration:');
   console.log(`- Password: ${process.env.LOGIN_PASSWORD ? '[SET]' : '[DEFAULT]'}`);
@@ -1879,4 +2243,5 @@ app.listen(PORT, () => {
   console.log(`- Lockout duration: ${process.env.LOGIN_LOCKOUT_MINUTES || 5} minutes`);
   console.log(`- Session timeout: 24 hours (hardcoded)`);
   console.log(`Data directory: ${DATA_DIR}`);
+  console.log(`WebSocket server ready for real-time updates`);
 });

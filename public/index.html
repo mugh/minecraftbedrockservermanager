@@ -6,6 +6,7 @@
     <title>Bedrock Server Manager</title>
     <link href="/output.css" rel="stylesheet">
     <script src="/sweetalert2.all.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
         body { background: #111827; color: #f3f4f6; }
         .tab-active { border-bottom: 2px solid #10b981; color: #10b981; }
@@ -376,6 +377,10 @@
             if (checkAuth()) {
                 document.getElementById('loginForm').classList.add('hidden');
                 document.getElementById('app').classList.remove('hidden');
+
+                // Initialize WebSocket connection
+                initializeWebSocket();
+
                 fetchServers();
             } else {
                 document.getElementById('loginForm').classList.remove('hidden');
@@ -402,28 +407,130 @@
         });
         
         const API_BASE = '/api';
+        let socket;
         let state = {
-            servers: [],
-            selectedServer: null,
-            activeTab: 'dashboard',
-            activeAddonTab: 'behavior',
-            logs: [],
-            files: [],
-            backups: [],
-            config: {},
-            players: [],
-            consoleCommand: '',
-            currentPath: '/',
-            selectedFile: null,
-            contextMenuFile: null,
-            scrollPositions: {},
-            lastUpdate: 0,
-            updateInterval: 10000, // 10 seconds
-            addons: { behaviorPacks: [], resourcePacks: [] },
-            worlds: [],
-            forceFullRender: false,
-            lastActionServer: null
+          servers: [],
+          selectedServer: null,
+          activeTab: 'dashboard',
+          activeAddonTab: 'behavior',
+          logs: [],
+          files: [],
+          backups: [],
+          config: {},
+          players: [],
+          consoleCommand: '',
+          currentPath: '/',
+          selectedFile: null,
+          contextMenuFile: null,
+          scrollPositions: {},
+          lastUpdate: 0,
+          updateInterval: 30000, // Reduced polling interval as backup (30 seconds)
+          addons: { behaviorPacks: [], resourcePacks: [] },
+          worlds: [],
+          forceFullRender: false,
+          lastActionServer: null
         };
+
+        // WebSocket functions
+        function initializeWebSocket() {
+            // Try to connect with WebSocket first, fallback to polling
+            socket = io({
+                transports: ['websocket', 'polling'],
+                timeout: 5000,
+                forceNew: true
+            });
+
+            socket.on('connect', () => {
+                console.log('✅ Connected to WebSocket server (real-time mode)');
+                // Request initial data
+                socket.emit('request-initial-data');
+            });
+
+            socket.on('connect_error', (error) => {
+                console.warn('⚠️ WebSocket connection failed, falling back to polling:', error.message);
+                // Fallback to polling mode - reduce interval for better responsiveness
+                state.updateInterval = 10000; // 10 seconds polling fallback
+            });
+
+            socket.on('disconnect', (reason) => {
+                console.log('🔌 Disconnected from WebSocket server:', reason);
+                if (reason === 'io server disconnect') {
+                    // Server disconnected, try to reconnect
+                    socket.connect();
+                } else {
+                    // Client disconnected, fallback to polling
+                    state.updateInterval = 10000;
+                }
+            });
+
+            socket.on('servers-update', (servers) => {
+                console.log('Received servers update:', servers);
+                // Check if the selected server status changed
+                const selectedServer = state.servers.find(s => s.id === state.selectedServer);
+                const newSelectedServer = servers.find(s => s.id === state.selectedServer);
+
+                state.servers = servers;
+                if (!state.selectedServer && state.servers.length > 0) {
+                    state.selectedServer = state.servers[0].id;
+                }
+
+                // Force full render to update server control header
+                state.forceFullRender = true;
+                renderSidebar();
+                render(); // This will update the server control header
+
+                // If selected server status changed, fetch its details
+                if (selectedServer && newSelectedServer && selectedServer.status !== newSelectedServer.status) {
+                    fetchServerDetails();
+                }
+            });
+
+            socket.on('server-details-update', (data) => {
+                console.log('Received server details update:', data);
+                const { serverId, logs, players, config } = data;
+
+                if (serverId === state.selectedServer) {
+                    // Store current scroll positions before updating
+                    storeScrollPositions();
+
+                    // Check which data actually changed based on current tab
+                    let dataChanged = false;
+
+                    if (state.activeTab === 'dashboard' || state.activeTab === 'console') {
+                        if (JSON.stringify(state.logs) !== JSON.stringify(logs)) {
+                            state.logs = logs;
+                            dataChanged = true;
+                        }
+                    }
+
+                    if (state.activeTab === 'dashboard' || state.activeTab === 'players') {
+                        if (JSON.stringify(state.players) !== JSON.stringify(players)) {
+                            state.players = players;
+                            dataChanged = true;
+                            state.forceFullRender = true; // Force full render to update tab labels
+                        }
+                    }
+
+                    if (state.activeTab === 'config') {
+                        if (JSON.stringify(state.config) !== JSON.stringify(config)) {
+                            state.config = config;
+                            dataChanged = true;
+                        }
+                    }
+
+                    // Always re-render for WebSocket updates to ensure UI reflects changes
+                    if (dataChanged) {
+                        console.log('🔄 Re-rendering UI due to WebSocket update');
+                        // Force full render for WebSocket updates to ensure all UI elements update immediately
+                        state.forceFullRender = true;
+                        render();
+                        renderSidebar(); // Update sidebar in case player count changed
+                        // Restore scroll positions after render is complete
+                        setTimeout(restoreScrollPositions, 100);
+                    }
+                }
+            });
+        }
 
         // Fetch functions
         async function fetchServers() {
@@ -462,6 +569,8 @@
             };
         }
 
+        // Cache removed for accuracy - always fetch fresh data
+
         // Restore scroll positions after render
         function restoreScrollPositions() {
             if (!state.scrollPositions) return;
@@ -486,124 +595,101 @@
             storeScrollPositions();
 
             try {
-                // Only fetch data relevant to the current active tab to minimize UI disruption
+                // Always fetch fresh data for the current active tab - no caching for accuracy
                 const fetchPromises = [];
 
                 // Always fetch logs for dashboard and console tabs
                 if (state.activeTab === 'dashboard' || state.activeTab === 'console') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/logs`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/logs`).then(r => r.json()).catch(() => []));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.logs));
+                    fetchPromises.push(Promise.resolve([]));
                 }
 
                 // Fetch files only for files tab
                 if (state.activeTab === 'files') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/files?path=${state.currentPath}`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/files?path=${state.currentPath}`).then(r => r.json()).catch(() => []));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.files));
+                    fetchPromises.push(Promise.resolve([]));
                 }
 
                 // Fetch backups only for backups tab
                 if (state.activeTab === 'backups') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/backups`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/backups`).then(r => r.json()).catch(() => []));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.backups));
+                    fetchPromises.push(Promise.resolve([]));
                 }
 
                 // Fetch config only for config tab
                 if (state.activeTab === 'config') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/config`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/config`).then(r => r.json()).catch(() => ({})));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.config));
+                    fetchPromises.push(Promise.resolve({}));
                 }
 
                 // Always fetch players for dashboard and players tabs
                 if (state.activeTab === 'dashboard' || state.activeTab === 'players') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/players`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/players`).then(r => r.json()).catch(() => []));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.players));
+                    fetchPromises.push(Promise.resolve([]));
                 }
 
                 // Fetch addons only for addons tab
                 if (state.activeTab === 'addons') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/addons`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/addons`).then(r => r.json()).catch(() => ({ behaviorPacks: [], resourcePacks: [] })));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.addons));
+                    fetchPromises.push(Promise.resolve({ behaviorPacks: [], resourcePacks: [] }));
                 }
 
                 // Fetch worlds only for addons tab (worlds are part of addons)
                 if (state.activeTab === 'addons') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/worlds`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/worlds`).then(r => r.json()).catch(() => []));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.worlds));
+                    fetchPromises.push(Promise.resolve([]));
                 }
 
                 // Fetch config only for addons tab (to determine current world)
                 if (state.activeTab === 'addons') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/config`).then(r => r.json()));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/config`).then(r => r.json()).catch(() => ({})));
                 } else {
-                    fetchPromises.push(Promise.resolve(state.config));
+                    fetchPromises.push(Promise.resolve({}));
                 }
 
                 const [logs, files, backups, config, players, addons, worlds, addonConfig] = await Promise.all(fetchPromises);
 
-                // Check which data actually changed based on current tab
-                let dataChanged = false;
-
+                // Always update state with fresh data
                 if (state.activeTab === 'dashboard' || state.activeTab === 'console') {
-                    if (JSON.stringify(state.logs) !== JSON.stringify(logs)) {
-                        state.logs = logs;
-                        dataChanged = true;
-                    }
+                    state.logs = logs;
                 }
 
                 if (state.activeTab === 'files') {
-                    if (JSON.stringify(state.files) !== JSON.stringify(files)) {
-                        state.files = files;
-                        dataChanged = true;
-                    }
+                    state.files = files;
                 }
 
                 if (state.activeTab === 'backups') {
-                    if (JSON.stringify(state.backups) !== JSON.stringify(backups)) {
-                        state.backups = backups;
-                        dataChanged = true;
-                    }
+                    state.backups = backups;
                 }
 
                 if (state.activeTab === 'config') {
-                    if (JSON.stringify(state.config) !== JSON.stringify(config)) {
-                        state.config = config;
-                        dataChanged = true;
-                    }
+                    state.config = config;
                 }
 
                 if (state.activeTab === 'dashboard' || state.activeTab === 'players') {
-                    if (JSON.stringify(state.players) !== JSON.stringify(players)) {
-                        state.players = players;
-                        dataChanged = true;
-                        state.forceFullRender = true; // Force full render to update tab labels
-                    }
+                    state.players = players;
+                    state.forceFullRender = true; // Force full render to update tab labels
                 }
 
                 if (state.activeTab === 'addons') {
-                    if (JSON.stringify(state.addons) !== JSON.stringify(addons) ||
-                        JSON.stringify(state.worlds) !== JSON.stringify(worlds) ||
-                        JSON.stringify(state.config) !== JSON.stringify(addonConfig)) {
-                        state.addons = addons;
-                        state.worlds = worlds;
-                        state.config = addonConfig;
-                        dataChanged = true;
-                    }
+                    state.addons = addons;
+                    state.worlds = worlds;
+                    state.config = addonConfig;
                 }
 
-                // Only re-render if relevant data changed
-                if (dataChanged) {
-                    render();
-                    renderSidebar(); // Update sidebar in case player count changed
-                    // Restore scroll positions after render is complete
-                    requestAnimationFrame(restoreScrollPositions);
-                }
+                // Always re-render with fresh data
+                render();
+                renderSidebar(); // Update sidebar in case player count changed
+                // Restore scroll positions after render is complete
+                requestAnimationFrame(restoreScrollPositions);
+
             } catch (err) {
                 console.error('Failed to fetch details:', err);
             }
@@ -1878,6 +1964,7 @@
                 // Only update the main content area, not the entire app to preserve scroll positions
                 const mainContent = document.getElementById('mainContent');
                 if (mainContent) {
+                    // Always update main content for real-time updates
                     mainContent.innerHTML = renderTabContent(currentServer);
                     return;
                 }
@@ -2003,6 +2090,10 @@
                             <div class="bg-gray-800 rounded-lg p-4 mb-2">
                                 <h3 class="text-base font-semibold mb-3">📊 Server Stats</h3>
                                 <div class="space-y-2">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Container Name</span>
+                                        <span class="font-mono">${server.containerName}</span>
+                                    </div>
                                     <div class="flex justify-between text-sm">
                                         <span class="text-gray-400">Uptime</span>
                                         <span class="font-mono">${server.uptime || '0h 0m'}</span>
@@ -2466,7 +2557,10 @@
             state.selectedServer = id;
             renderSidebar();
             render(); // Update main content immediately with new server info
+
+            // Fetch fresh server data - no caching for accuracy
             fetchServerDetails();
+
             // Close sidebar on mobile after selecting server
             if (window.innerWidth <= 768) {
                 const sidebar = document.getElementById('sidebar');
@@ -2478,14 +2572,20 @@
             }
         }
 
+        // Removed caching - always fetch fresh data for accuracy
+        // WebSocket handles real-time updates
+
         function switchTab(tab) {
             state.activeTab = tab;
             // Update tab button styles
             updateTabStyles();
-            // Fetch data for the new tab before rendering
+
+            // Always fetch fresh data for accuracy - no caching
+            console.log(`📡 Fetching fresh data for tab: ${tab}`);
             fetchServerDetails().then(() => {
                 render();
             });
+
             // Close sidebar on mobile after selecting tab
             if (window.innerWidth <= 768) {
                 const sidebar = document.getElementById('sidebar');
@@ -2495,6 +2595,12 @@
                     overlay.classList.remove('active');
                 }
             }
+        }
+
+        function checkIfTabNeedsFetch(tab) {
+            // No caching - always fetch fresh data for accuracy
+            // WebSocket handles real-time updates
+            return true;
         }
 
         function updateTabStyles() {
@@ -2514,7 +2620,11 @@
         function switchAddonTab(tab) {
             state.activeAddonTab = tab;
             updateAddonTabStyles();
-            render();
+            // Always fetch fresh data for accuracy
+            console.log(`📡 Switching to addon sub-tab: ${tab}`);
+            fetchServerDetails().then(() => {
+                render();
+            });
         }
 
         function updateAddonTabStyles() {
@@ -2570,12 +2680,15 @@
             }
         }
 
-        // Use requestAnimationFrame for smoother updates
+        // Use requestAnimationFrame for smoother updates (reduced polling as WebSocket backup)
         function updateLoop() {
             const now = Date.now();
             if (now - state.lastUpdate >= state.updateInterval) {
                 state.lastUpdate = now;
-                fetchServerDetails();
+                // Only fetch if WebSocket is not connected or as fallback
+                if (!socket || !socket.connected) {
+                    fetchServerDetails();
+                }
             }
             checkAuthPeriodically();
             requestAnimationFrame(updateLoop);

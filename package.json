@@ -6,6 +6,7 @@
   "scripts": {
     "start": "npm run build:css:prod && npm run copy-assets && pm2 start ecosystem.config.js --env production",
     "dev": "nodemon server.js",
+    "setup": "node setup-websocket.js",
     "build:css": "tailwindcss -i ./public/styles.css -o ./public/output.css --watch",
     "build:css:prod": "tailwindcss -i ./public/styles.css -o ./public/output.css --minify",
     "copy-assets": "node -e \"const fs = require('fs-extra'); fs.copySync('node_modules/sweetalert2/dist', 'public', { overwrite: true });\"",
