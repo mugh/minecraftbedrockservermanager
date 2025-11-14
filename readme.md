@@ -50,9 +50,7 @@ The aplication will deploy a minecraft bedrock server using docker itzg/docker-m
 - Made compatible with windows (untested, you tell me)
 
 ### WebSocket Real-time Features
-This application uses WebSocket for real-time updates, providing instant UI synchronization across multiple browser tabs without manual refresh.
-
-#### WebSocket Requirements
+This application uses WebSocket for real-time updates, providing instant UI synchronization across multiple browser tabs without manual refresh.
 - **Automatic Fallback**: If WebSocket connection fails, the app automatically falls back to HTTP polling (30-second intervals)
 - **Cross-tab Sync**: Changes made in one browser tab instantly appear in all other open tabs
 - **Network Requirements**: WebSocket uses the same port as the HTTP server (default: 3001)
