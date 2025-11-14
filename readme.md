@@ -54,13 +54,7 @@ This application uses WebSocket for real-time updates, providing instant UI sync
 
 #### WebSocket Requirements
 - **Automatic Fallback**: If WebSocket connection fails, the app automatically falls back to HTTP polling (30-second intervals)
-- **Cross-tab Sync**: Changes made in one browser tab instantly appear in all other open tabs
-- **Real-time Data**:
-  - Server status changes (running/stopped)
-  - Player join/leave events
-  - Live console log streaming
-  - Server rename updates
-  - Configuration changes
+- **Cross-tab Sync**: Changes made in one browser tab instantly appear in all other open tabs
 - **Network Requirements**: WebSocket uses the same port as the HTTP server (default: 3001)
 - **Firewall**: Ensure port 3001 is open for both HTTP and WebSocket connections
 
