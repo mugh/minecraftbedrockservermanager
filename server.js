@@ -255,6 +255,17 @@ app.post('/api/servers', async (req, res) => {
 
     await container.start();
 
+    // Update metadata with actual container name after creation
+    const containerInfo = await container.inspect();
+    const actualContainerName = containerInfo.Name ? containerInfo.Name.replace('/', '') : serverId;
+    const metadataPath3 = path.join(serverPath, 'metadata.json');
+    if (await fs.pathExists(metadataPath3)) {
+      const metadata = await fs.readJson(metadataPath3);
+      metadata.containerName = actualContainerName;
+      metadata.updatedAt = new Date().toISOString();
+      await fs.writeJson(metadataPath3, metadata, { spaces: 2 });
+    }
+
     // Broadcast server update
     setTimeout(() => broadcastServerUpdate(serverId), 2000); // Wait for container to fully start
 
