@@ -1,5 +1,5 @@
 // server.js - Minecraft Bedrock Server Manager Backend
-// npm install express cors dockerode archiver fs-extra unzipper dotenv multer socket.io
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -26,14 +26,42 @@ const io = new Server(server, {
   pingInterval: 25000
 });
 
+// Ensure temp directories exist
+async function ensureTempDirs() {
+  try {
+    await fs.ensureDir('./temp');
+    await fs.ensureDir('./temp/addon-uploads');
+    await fs.ensureDir('./temp/uploads');
+    console.log('Temp directories created/verified');
+  } catch (err) {
+    console.error('Failed to create temp directories:', err);
+  }
+}
+
 // Cross-platform Docker configuration
 const dockerConfig = process.platform === 'win32'
   ? { host: 'localhost', port: 2375 } // Windows Docker Desktop (ensure TCP is enabled)
   : { socketPath: '/var/run/docker.sock' }; // Linux/Unix socket
 const docker = new Docker(dockerConfig);
 
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+
+// Handle preflight OPTIONS requests
+app.options('*', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+  res.status(200).end();
+});
+
+app.use(express.json({ limit: '50mb' })); // Increase JSON payload limit
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Handle URL-encoded data
 
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -156,7 +184,7 @@ app.get('/api/servers', async (req, res) => {
       return {
         id: serverId,
         name: serverName,
-        containerName: c.Names[0].replace('/', ''),
+        containerName: (c.Names && c.Names[0]) ? c.Names[0].replace('/', '') : (metadata.containerName || serverId),
         version: serverVersion,
         status: c.State,
         players: playerCount,
@@ -252,6 +280,19 @@ app.post('/api/servers/:id/start', async (req, res) => {
     // Try to start the container first
     try {
       await container.start();
+
+      // Update metadata with actual container name
+      const serverPath = getServerPath(req.params.id);
+      const metadataPath = path.join(serverPath, 'metadata.json');
+      if (await fs.pathExists(metadataPath)) {
+        const metadata = await fs.readJson(metadataPath);
+        const containerInfo = await container.inspect();
+        const containerName = containerInfo.Name ? containerInfo.Name.replace('/', '') : req.params.id;
+        metadata.containerName = containerName;
+        metadata.updatedAt = new Date().toISOString();
+        await fs.writeJson(metadataPath, metadata, { spaces: 2 });
+      }
+
       // Broadcast server update
       setTimeout(() => broadcastServerUpdate(req.params.id), 2000);
       res.json({ message: 'Server started' });
@@ -310,6 +351,17 @@ app.post('/api/servers/:id/start', async (req, res) => {
 
         // Start the new container
         await newContainer.start();
+
+        // Update metadata with actual container name
+        const metadataPath2 = path.join(serverPath, 'metadata.json');
+        if (await fs.pathExists(metadataPath2)) {
+          const metadata = await fs.readJson(metadataPath2);
+          const newContainerInfo = await newContainer.inspect();
+          const containerName = newContainerInfo.Name ? newContainerInfo.Name.replace('/', '') : serverId;
+          metadata.containerName = containerName;
+          metadata.updatedAt = new Date().toISOString();
+          await fs.writeJson(metadataPath2, metadata, { spaces: 2 });
+        }
 
         res.json({
           message: 'Server started with updated port due to port conflict',
@@ -948,7 +1000,7 @@ app.delete('/api/servers/:id/files', async (req, res) => {
 });
 
 // POST /api/servers/:id/files/upload - Upload files
-const upload = multer({ dest: '/tmp/uploads/' });
+const upload = multer({ dest: './temp/uploads/' });
 
 app.post('/api/servers/:id/files/upload', upload.array('files'), async (req, res) => {
   try {
@@ -1382,6 +1434,18 @@ app.get('/api/config/login', (req, res) => {
   });
 });
 
+// Serve upload configuration
+app.get('/api/config/upload', (req, res) => {
+  res.json({
+    maxFileSize: 500 * 1024 * 1024, // 500MB in bytes
+    maxFileSizeMB: 500,
+    maxFileSizeGB: 0.5,
+    supportedTypes: ['.mcaddon', '.mcpack', '.mcworld', '.mctemplate'],
+    chunkedUpload: false,
+    resumableUpload: false
+  });
+});
+
 // ==================== ADDON MANAGEMENT ====================
 
 // Helper: Get addon directories
@@ -1545,28 +1609,60 @@ app.get('/api/servers/:id/addons', async (req, res) => {
 });
 
 // POST /api/servers/:id/addons/upload - Upload addon files
-const addonUpload = multer({ dest: '/tmp/addon-uploads/' });
+const addonUpload = multer({
+  dest: './temp/addon-uploads/',
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB limit for large addon files
+    files: 1 // Only one file at a time
+  }
+});
+
+// OPTIONS handler for upload endpoint
+app.options('/api/servers/:id/addons/upload', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Content-Length');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.setHeader('X-Max-Upload-Size', '500MB');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.status(200).end();
+});
 
 app.post('/api/servers/:id/addons/upload', addonUpload.single('addon'), async (req, res) => {
+  res.setHeader('X-Max-Upload-Size', '500MB');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Upload-Progress', 'true');
+
+  const serverId = req.params.id;
+  const startTime = Date.now();
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    
-    const paths = getAddonPaths(req.params.id);
+
+    const fileSize = req.file.size;
     const originalName = req.file.originalname;
+
+    io.emit('upload-progress', {
+      serverId,
+      status: 'started',
+      filename: originalName,
+      size: fileSize,
+      progress: 0
+    });
+
+    const paths = getAddonPaths(serverId);
     const ext = path.extname(originalName).toLowerCase();
-    
-    // Determine addon type and target directory
+
     let targetDir;
     let addonType;
-    
+
     if (ext === '.mcaddon') {
-      // mcaddon can contain both behavior and resource packs
       addonType = 'mcaddon';
-      targetDir = paths.behaviorPacks; // Will extract to both
+      targetDir = paths.behaviorPacks;
     } else if (ext === '.mcpack') {
-      // mcpack is typically a resource pack
       addonType = 'mcpack';
       targetDir = paths.resourcePacks;
     } else if (ext === '.mcworld') {
@@ -1577,98 +1673,146 @@ app.post('/api/servers/:id/addons/upload', addonUpload.single('addon'), async (r
       targetDir = paths.worlds;
     } else {
       await fs.remove(req.file.path);
+      io.emit('upload-progress', {
+        serverId,
+        status: 'error',
+        filename: originalName,
+        error: 'Invalid file type. Only .mcaddon, .mcpack, .mcworld, and .mctemplate are supported'
+      });
       return res.status(400).json({ error: 'Invalid file type. Only .mcaddon, .mcpack, .mcworld, and .mctemplate are supported' });
     }
-    
+
     await fs.ensureDir(targetDir);
-    
-    // Extract the addon
+
+    io.emit('upload-progress', {
+      serverId,
+      status: 'processing',
+      filename: originalName,
+      progress: 25
+    });
+
     if (ext === '.mcaddon') {
-      // Extract mcaddon - it may contain behavior_packs and/or resource_packs folders
-      const tempExtractPath = path.join('/tmp', `extract-${Date.now()}`);
+      const tempExtractPath = path.join('./temp', `extract-${Date.now()}`);
       await fs.ensureDir(tempExtractPath);
-      
+
       await fs.createReadStream(req.file.path)
         .pipe(unzipper.Extract({ path: tempExtractPath }))
         .promise();
-      
-      // Check for behavior_packs and resource_packs folders
+
+      io.emit('upload-progress', {
+        serverId,
+        status: 'processing',
+        filename: originalName,
+        progress: 50
+      });
+
       const extractedItems = await fs.readdir(tempExtractPath);
-      
+      let processedItems = 0;
+
       for (const item of extractedItems) {
         const itemPath = path.join(tempExtractPath, item);
         const stats = await fs.stat(itemPath);
-        
+
         if (stats.isDirectory()) {
           if (item === 'behavior_packs' || item === 'behavior_pack') {
-            // Copy behavior packs
             const behaviorItems = await fs.readdir(itemPath);
             for (const pack of behaviorItems) {
-              await fs.copy(path.join(itemPath, pack), path.join(paths.behaviorPacks, pack), { overwrite: true });
+              const sourcePath = path.join(itemPath, pack);
+              const destPath = path.join(paths.behaviorPacks, pack);
+              await fs.copy(sourcePath, destPath, { overwrite: true });
+              processedItems++;
             }
           } else if (item === 'resource_packs' || item === 'resource_pack') {
-            // Copy resource packs
             const resourceItems = await fs.readdir(itemPath);
             for (const pack of resourceItems) {
-              await fs.copy(path.join(itemPath, pack), path.join(paths.resourcePacks, pack), { overwrite: true });
+              const sourcePath = path.join(itemPath, pack);
+              const destPath = path.join(paths.resourcePacks, pack);
+              await fs.copy(sourcePath, destPath, { overwrite: true });
+              processedItems++;
             }
           } else {
-            // Single pack directory - try to determine type from manifest
             const manifestPath = path.join(itemPath, 'manifest.json');
             if (await fs.pathExists(manifestPath)) {
               try {
                 const manifest = await parseManifestJson(manifestPath);
                 const modules = manifest.modules || [];
                 const isBehavior = modules.some(m => m.type === 'data' || m.type === 'javascript');
-                
-                if (isBehavior) {
-                  await fs.copy(itemPath, path.join(paths.behaviorPacks, item), { overwrite: true });
-                } else {
-                  await fs.copy(itemPath, path.join(paths.resourcePacks, item), { overwrite: true });
-                }
+                const targetPath = isBehavior ? paths.behaviorPacks : paths.resourcePacks;
+                await fs.copy(itemPath, path.join(targetPath, item), { overwrite: true });
+                processedItems++;
               } catch (err) {
-                console.warn(`Failed to parse manifest for ${item}, defaulting to resource pack:`, err.message);
-                // Default to resource pack if manifest can't be parsed
                 await fs.copy(itemPath, path.join(paths.resourcePacks, item), { overwrite: true });
+                processedItems++;
               }
             }
           }
         }
       }
-      
+
       await fs.remove(tempExtractPath);
     } else if (ext === '.mcpack') {
-      // Extract mcpack to resource_packs
       const packName = path.basename(originalName, ext);
       const extractPath = path.join(targetDir, packName);
-      
       await fs.createReadStream(req.file.path)
         .pipe(unzipper.Extract({ path: extractPath }))
         .promise();
     } else if (ext === '.mcworld' || ext === '.mctemplate') {
-      // Extract world/template
       const worldName = path.basename(originalName, ext);
       const extractPath = path.join(targetDir, worldName);
-      
       await fs.createReadStream(req.file.path)
         .pipe(unzipper.Extract({ path: extractPath }))
         .promise();
     }
-    
-    // Clean up uploaded file
+
+    io.emit('upload-progress', {
+      serverId,
+      status: 'processing',
+      filename: originalName,
+      progress: 75
+    });
+
     await fs.remove(req.file.path);
-    
-    res.json({ 
+
+    const duration = Date.now() - startTime;
+
+    io.emit('upload-progress', {
+      serverId,
+      status: 'completed',
+      filename: originalName,
+      progress: 100,
+      duration: duration
+    });
+
+    setTimeout(() => broadcastServerDetails(serverId), 500);
+
+    res.json({
       message: 'Addon uploaded and extracted successfully',
       type: addonType,
-      filename: originalName
+      filename: originalName,
+      duration: duration,
+      size: fileSize
     });
   } catch (err) {
-    console.error('Error uploading addon:', err);
+    const duration = Date.now() - startTime;
+    const filename = req.file?.originalname || 'unknown';
+
+    io.emit('upload-progress', {
+      serverId,
+      status: 'error',
+      filename: filename,
+      error: err.message,
+      duration: duration
+    });
+
     if (req.file) {
       await fs.remove(req.file.path).catch(() => {});
     }
-    res.status(500).json({ error: err.message });
+
+    res.status(500).json({
+      error: err.message,
+      filename: filename,
+      duration: duration
+    });
   }
 });
 
@@ -2065,7 +2209,7 @@ async function broadcastServerUpdate(serverId = null) {
       return {
         id: currentServerId,
         name: serverName,
-        containerName: c.Names[0].replace('/', ''),
+        containerName: (c.Names && c.Names[0]) ? c.Names[0].replace('/', '') : (metadata.containerName || currentServerId),
         version: serverVersion,
         status: c.State,
         players: playerCount,
@@ -2090,152 +2234,168 @@ async function broadcastServerUpdate(serverId = null) {
   }
 }
 
-// Helper function to broadcast server details
+// Helper function to broadcast server details with timeout
 async function broadcastServerDetails(serverId) {
   try {
-    const container = await getContainer(serverId);
-    if (!container) return;
+    await Promise.race([
+      (async () => {
+        const container = await getContainer(serverId);
+        if (!container) return;
 
-    // Get logs
-    const logs = await container.logs({
-      stdout: true,
-      stderr: true,
-      tail: 100
-    });
-    const logLines = logs.toString().split('\n').filter(l => l.trim());
+        const logs = await container.logs({
+          stdout: true,
+          stderr: true,
+          tail: 50
+        });
+        const logLines = logs.toString().split('\n').filter(l => l.trim());
 
-    // Get players
-    let players = [];
-    if (container) {
-      const containerInfo = await container.inspect();
-      if (containerInfo.State.Status === 'running') {
-        let logs;
-        try {
-          const exec = await container.exec({
-            Cmd: ['send-command', 'list'],
-            AttachStdout: true,
-            AttachStderr: true
-          });
-          await exec.start();
-          await new Promise(resolve => setTimeout(resolve, 500));
-          logs = await container.logs({
-            stdout: true,
-            stderr: true,
-            tail: 20
-          });
-        } catch (err) {
-          return;
-        }
-
-        const logText = logs.toString();
-        const lines = logText.trim().split('\n');
-        const players_temp = [];
-
-        let lastIndex = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes('players online:')) {
-            lastIndex = i;
+        let players = [];
+        const containerInfo = await container.inspect();
+        if (containerInfo.State.Status === 'running') {
+          let logs;
+          try {
+            const exec = await container.exec({
+              Cmd: ['send-command', 'list'],
+              AttachStdout: true,
+              AttachStderr: true
+            });
+            await exec.start();
+            await new Promise(resolve => setTimeout(resolve, 300));
+            logs = await container.logs({
+              stdout: true,
+              stderr: true,
+              tail: 15
+            });
+          } catch (err) {
+            return;
           }
-        }
 
-        if (lastIndex >= 0) {
-          for (let i = lastIndex + 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (line.startsWith('[') || line.startsWith('>') || line.includes('AutoCompaction') || line === '') {
-              break;
-            }
-            if (line) {
-              const names = line.split(',').map(n => n.replace(/[^\x20-\x7E]/g, '').trim()).filter(n => n);
-              players_temp.push(...names.map(name => ({ name })));
+          const logText = logs.toString();
+          const lines = logText.trim().split('\n');
+          const players_temp = [];
+
+          let lastIndex = -1;
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes('players online:')) {
+              lastIndex = i;
             }
           }
-        }
 
-        // Get player cache and XUIDs
-        let playerCache = {};
-        const cachePath = path.join(getServerPath(serverId), 'player_cache.json');
-        try {
-          if (await fs.pathExists(cachePath)) {
-            const cacheContent = await fs.readFile(cachePath, 'utf8');
-            playerCache = JSON.parse(cacheContent);
+          if (lastIndex >= 0) {
+            for (let i = lastIndex + 1; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (line.startsWith('[') || line.startsWith('>') || line.includes('AutoCompaction') || line === '') {
+                break;
+              }
+              if (line) {
+                const names = line.split(',').map(n => n.replace(/[^\x20-\x7E]/g, '').trim()).filter(n => n);
+                players_temp.push(...names.map(name => ({ name })));
+              }
+            }
           }
-        } catch (err) {}
 
-        for (const player of players_temp) {
-          if (playerCache[player.name]) {
-            player.xuid = playerCache[player.name];
-          } else {
-            try {
-              const response = await fetch(`https://mcprofile.io/api/v1/bedrock/gamertag/${encodeURIComponent(player.name)}`);
-              if (response.ok) {
-                const data = await response.json();
-                player.xuid = data.xuid || null;
-                playerCache[player.name] = player.xuid;
-              } else {
+          let playerCache = {};
+          const cachePath = path.join(getServerPath(serverId), 'player_cache.json');
+          try {
+            if (await fs.pathExists(cachePath)) {
+              const cacheContent = await fs.readFile(cachePath, 'utf8');
+              playerCache = JSON.parse(cacheContent);
+            }
+          } catch (err) {}
+
+          const uncachedPlayers = players_temp.filter(p => !playerCache[p.name]).slice(0, 3);
+
+          if (uncachedPlayers.length > 0) {
+            for (const player of uncachedPlayers) {
+              try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+                const response = await fetch(`https://mcprofile.io/api/v1/bedrock/gamertag/${encodeURIComponent(player.name)}`, {
+                  signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                  const data = await response.json();
+                  player.xuid = data.xuid || null;
+                  playerCache[player.name] = player.xuid;
+                } else {
+                  player.xuid = null;
+                }
+              } catch (err) {
                 player.xuid = null;
               }
-            } catch (err) {
-              player.xuid = null;
+              await new Promise(resolve => setTimeout(resolve, 50));
             }
-            await new Promise(resolve => setTimeout(resolve, 100));
+
+            try {
+              await fs.writeJson(cachePath, playerCache, { spaces: 2 });
+            } catch (err) {}
           }
+
+          players_temp.forEach(player => {
+            if (playerCache[player.name]) {
+              player.xuid = playerCache[player.name];
+            }
+          });
+
+          let permissions = [];
+          try {
+            const permissionsPath = path.join(getServerPath(serverId), 'permissions.json');
+            if (await fs.pathExists(permissionsPath)) {
+              const permissionsContent = await fs.readFile(permissionsPath, 'utf8');
+              permissions = JSON.parse(permissionsContent);
+            }
+          } catch (err) {}
+
+          const operatorXuids = permissions.filter(p => p.permission === 'operator').map(p => p.xuid);
+          players_temp.forEach(player => {
+            player.isOperator = player.xuid && operatorXuids.includes(player.xuid);
+          });
+
+          players = players_temp;
         }
 
+        let config = {};
         try {
-          await fs.writeJson(cachePath, playerCache, { spaces: 2 });
-        } catch (err) {}
-
-        // Check operators
-        let permissions = [];
-        try {
-          const permissionsPath = path.join(getServerPath(serverId), 'permissions.json');
-          if (await fs.pathExists(permissionsPath)) {
-            const permissionsContent = await fs.readFile(permissionsPath, 'utf8');
-            permissions = JSON.parse(permissionsContent);
+          const serverPath = getServerPath(serverId);
+          const configPath = path.join(serverPath, 'server.properties');
+          if (await fs.pathExists(configPath)) {
+            const content = await fs.readFile(configPath, 'utf8');
+            content.split('\n').forEach(line => {
+              if (line.trim() && !line.startsWith('#')) {
+                const [key, value] = line.split('=');
+                if (key && value !== undefined) {
+                  config[key.trim()] = value.trim();
+                }
+              }
+            });
           }
         } catch (err) {}
 
-        const operatorXuids = permissions.filter(p => p.permission === 'operator').map(p => p.xuid);
-        players_temp.forEach(player => {
-          player.isOperator = player.xuid && operatorXuids.includes(player.xuid);
+        io.emit('server-details-update', {
+          serverId,
+          logs: logLines,
+          players,
+          config
         });
-
-        players = players_temp;
-      }
-    }
-
-    // Get config
-    let config = {};
-    try {
-      const serverPath = getServerPath(serverId);
-      const configPath = path.join(serverPath, 'server.properties');
-      if (await fs.pathExists(configPath)) {
-        const content = await fs.readFile(configPath, 'utf8');
-        content.split('\n').forEach(line => {
-          if (line.trim() && !line.startsWith('#')) {
-            const [key, value] = line.split('=');
-            if (key && value !== undefined) {
-              config[key.trim()] = value.trim();
-            }
-          }
-        });
-      }
-    } catch (err) {}
-
-    io.emit('server-details-update', {
-      serverId,
-      logs: logLines,
-      players,
-      config
-    });
+      })(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Broadcast timeout after 10 seconds')), 10000);
+      })
+    ]);
   } catch (err) {
-    console.error('Error broadcasting server details:', err);
+    if (!err.message.includes('Broadcast timeout')) {
+      console.error('Error broadcasting server details:', err);
+    }
   }
 }
 
 // Start server
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
+  await ensureTempDirs();
   console.log(`Bedrock Server Manager API running on port ${PORT}`);
   console.log('Login configuration:');
   console.log(`- Password: ${process.env.LOGIN_PASSWORD ? '[SET]' : '[DEFAULT]'}`);
@@ -2243,5 +2403,6 @@ server.listen(PORT, () => {
   console.log(`- Lockout duration: ${process.env.LOGIN_LOCKOUT_MINUTES || 5} minutes`);
   console.log(`- Session timeout: 24 hours (hardcoded)`);
   console.log(`Data directory: ${DATA_DIR}`);
+  console.log(`Temp directory: ./temp/`);
   console.log(`WebSocket server ready for real-time updates`);
 });

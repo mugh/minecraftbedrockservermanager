@@ -8,13 +8,13 @@ Full-stack application to manage multiple Minecraft Bedrock servers using itzg/d
 The aplication will deploy a minecraft bedrock server using docker itzg/docker-minecraft-bedrock-server latest image, assign port, persistent volume. The aplication then act as UI to manage this container.
 
 ### Features
-- ✅ Real-time WebSocket Updates
+- ✅ **Real-time WebSocket Updates**
 - ✅ Multiple server management
 - ✅ Select server version (Latest, Latest Preview or custom)
 - ✅ Start/Stop/Restart containers
 - ✅ Server renaming
 - ✅ Console commands
-- ✅ Advanced File Manager
+- ✅ **Advanced File Manager**
   - Upload multiple files
   - Download files
   - Delete files/folders
@@ -25,7 +25,7 @@ The aplication will deploy a minecraft bedrock server using docker itzg/docker-m
   - Context menu (right-click)
   - Zip/Unzip files and folders
   - Keyboard shortcuts
-- ✅ Addon Management
+- ✅ **Addon Management**
   - Upload .mcaddon, .mcpack, .mcworld, .mctemplate files
   - Enable/disable behavior packs
   - Enable/disable resource packs
@@ -50,9 +50,17 @@ The aplication will deploy a minecraft bedrock server using docker itzg/docker-m
 - Made compatible with windows (untested, you tell me)
 
 ### WebSocket Real-time Features
-This application uses WebSocket for real-time updates, providing instant UI synchronization across multiple browser tabs without manual refresh.
+This application uses WebSocket for real-time updates, providing instant UI synchronization across multiple browser tabs without manual refresh.
+
+#### WebSocket Requirements
 - **Automatic Fallback**: If WebSocket connection fails, the app automatically falls back to HTTP polling (30-second intervals)
-- **Cross-tab Sync**: Changes made in one browser tab instantly appear in all other open tabs
+- **Cross-tab Sync**: Changes made in one browser tab instantly appear in all other open tabs
+- **Real-time Data**:
+  - Server status changes (running/stopped)
+  - Player join/leave events
+  - Live console log streaming
+  - Server rename updates
+  - Configuration changes
 - **Network Requirements**: WebSocket uses the same port as the HTTP server (default: 3001)
 - **Firewall**: Ensure port 3001 is open for both HTTP and WebSocket connections
 
@@ -66,7 +74,8 @@ Download the source  code
 # Install backend dependencies (includes WebSocket support)
 npm install
 
-# Note: WebSocket functionality requires socket.io
+# Note: WebSocket functionality requires socket.io
+# If you encounter WebSocket connection issues, ensure socket.io is properly installed
 ```
 
 #### 2. **Configure Environment**
@@ -91,7 +100,7 @@ sudo chown $USER:$USER /opt/minecraft-servers #change this to your data director
 
 #### 4. **WebSocket Setup**
 ```bash
-# Run WebSocket setup 
+# Run WebSocket setup (optional, for enhanced real-time features)
 npm run setup
 ```
 
@@ -124,7 +133,8 @@ npm start
 # Install backend dependencies (includes WebSocket support)
 npm install
 
-# Note: WebSocket functionality requires socket.io
+# Note: WebSocket functionality requires socket.io
+# If you encounter WebSocket connection issues, ensure socket.io is properly installed
 ```
 
 ##### 2. **Configure Environment**
@@ -149,7 +159,7 @@ mkdir "C:\MINECRAFTSERVER\data"
 
 ##### 4. **WebSocket Setup**
 ```bash
-# Run WebSocket setup 
+# Run WebSocket setup (optional, for enhanced real-time features)
 npm run setup
 ```
 

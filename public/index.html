@@ -8,12 +8,25 @@
     <script src="/sweetalert2.all.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { background: #111827; color: #f3f4f6; }
-        .tab-active { border-bottom: 2px solid #10b981; color: #10b981; }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
-        .log-container { 
-            font-family: monospace; 
-            font-size: 11px; 
+        body {
+            background: #111827;
+            color: #f3f4f6;
+        }
+
+        .tab-active {
+            border-bottom: 2px solid #10b981;
+            color: #10b981;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .log-container {
+            font-family: monospace;
+            font-size: 11px;
             height: calc(100vh - 250px);
             min-height: 150px;
             max-height: 1000px;
@@ -25,12 +38,46 @@
             word-break: break-word;
             line-height: 1.3;
         }
-        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
-        .modal.active { display: flex; }
-        .modal > div { max-width: 100%; max-height: 90vh; overflow-y: auto; }
-        .context-menu { display: none; position: absolute; background: #1f2937; border: 1px solid #374151; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); z-index: 100; }
-        .context-menu.active { display: block; }
-        .sidebar { transition: transform 0.3s ease; }
+
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            padding: 1rem;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal > div {
+            max-width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .context-menu {
+            display: none;
+            position: absolute;
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+
+        .context-menu.active {
+            display: block;
+        }
+
+        .sidebar {
+            transition: transform 0.3s ease;
+        }
+
         .spinner {
             border: 2px solid #f3f4f6;
             border-top: 2px solid #10b981;
@@ -39,6 +86,7 @@
             height: 16px;
             animation: spin 1s linear infinite;
         }
+
         .loading-overlay {
             position: fixed;
             inset: 0;
@@ -48,39 +96,64 @@
             justify-content: center;
             z-index: 1000;
         }
-        .loading-overlay.hidden { display: none; }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
 
         @media (max-width: 768px) {
-            .sidebar { 
-                position: fixed; 
-                left: 0; 
-                top: 0; 
-                bottom: 0; 
-                z-index: 40; 
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                z-index: 40;
                 width: 16rem !important;
                 transform: translateX(-100%);
             }
-            .sidebar.sidebar-open { transform: translateX(0); }
-            .sidebar-overlay { 
-                display: none; 
-                position: fixed; 
-                inset: 0; 
-                background: rgba(0,0,0,0.5); 
-                z-index: 39; 
+
+            .sidebar.sidebar-open {
+                transform: translateX(0);
             }
-            .sidebar-overlay.active { display: block; }
-            .mobile-menu-btn { display: block !important; }
-            .log-container { height: calc(100vh - 350px); }
+
+            .sidebar-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 39;
+            }
+
+            .sidebar-overlay.active {
+                display: block;
+            }
+
+            .mobile-menu-btn {
+                display: block !important;
+            }
+
+            .log-container {
+                height: calc(100vh - 350px);
+            }
         }
-        
+
         @media (min-width: 769px) {
-            .mobile-menu-btn { display: none !important; }
-            .sidebar-overlay { display: none !important; }
-            .sidebar { transform: translateX(0) !important; }
+            .mobile-menu-btn {
+                display: none !important;
+            }
+
+            .sidebar-overlay {
+                display: none !important;
+            }
+
+            .sidebar {
+                transform: translateX(0) !important;
+            }
         }
     </style>
 </head>
@@ -106,8 +179,17 @@
         <div class="bg-gray-800 rounded-lg p-4 w-80">
             <h3 class="text-lg font-semibold mb-3">📤 Upload File</h3>
             <input type="file" id="uploadInput" multiple class="w-full px-3 py-1.5 text-sm bg-gray-900 border border-gray-700 rounded-lg mb-3">
+            <div id="fileUploadProgress" class="hidden mb-3">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="spinner"></div>
+                    <span id="fileUploadProgressText" class="text-sm text-gray-400">Uploading...</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div id="fileUploadProgressBar" class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
             <div class="flex gap-2">
-                <button onclick="uploadFiles()" class="flex-1 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 rounded-lg">Upload</button>
+                <button id="uploadFilesBtn" onclick="uploadFiles()" class="flex-1 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 rounded-lg">Upload</button>
                 <button onclick="closeModal('uploadModal')" class="flex-1 px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded-lg">Cancel</button>
             </div>
         </div>
@@ -169,9 +251,14 @@
                     <li><strong>.mctemplate</strong> - World templates</li>
                 </ul>
             </div>
-            <div id="uploadProgress" class="hidden mb-3 flex items-center gap-2">
-                <div class="spinner"></div>
-                <span class="text-sm text-gray-400">Uploading...</span>
+            <div id="uploadProgress" class="hidden mb-3">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="spinner"></div>
+                    <span id="uploadProgressText" class="text-sm text-gray-400">Uploading...</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div id="uploadProgressBar" class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
             </div>
             <div class="flex gap-2">
                 <button id="uploadAddonBtn" onclick="uploadAddon()" class="flex-1 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 rounded-lg">Upload</button>
@@ -179,6 +266,7 @@
             </div>
         </div>
     </div>
+
 
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="loading-overlay hidden">
@@ -215,7 +303,7 @@
 
         // Login configuration - loaded from server
         let LOGIN_CONFIG = {
-            SESSION_HOURS: 24           // Session timeout: 24 hours (hardcoded)
+            SESSION_HOURS: 24 // Session timeout: 24 hours (hardcoded)
         };
 
         // Load login configuration from server
@@ -227,7 +315,6 @@
                     LOGIN_CONFIG.PASSWORD = config.password;
                     LOGIN_CONFIG.MAX_ATTEMPTS = config.maxAttempts;
                     LOGIN_CONFIG.LOCKOUT_MINUTES = config.lockoutMinutes;
-                    // SESSION_HOURS is hardcoded to 24 hours
                 }
             } catch (err) {
                 console.warn('Failed to load login config, using defaults:', err);
@@ -433,7 +520,6 @@
 
         // WebSocket functions
         function initializeWebSocket() {
-            // Try to connect with WebSocket first, fallback to polling
             socket = io({
                 transports: ['websocket', 'polling'],
                 timeout: 5000,
@@ -441,24 +527,20 @@
             });
 
             socket.on('connect', () => {
-                console.log('✅ Connected to WebSocket server (real-time mode)');
-                // Request initial data
+                console.log('Connected to WebSocket server');
                 socket.emit('request-initial-data');
             });
 
             socket.on('connect_error', (error) => {
-                console.warn('⚠️ WebSocket connection failed, falling back to polling:', error.message);
-                // Fallback to polling mode - reduce interval for better responsiveness
+                console.warn('WebSocket connection failed, falling back to polling:', error.message);
                 state.updateInterval = 10000; // 10 seconds polling fallback
             });
 
             socket.on('disconnect', (reason) => {
-                console.log('🔌 Disconnected from WebSocket server:', reason);
+                console.log('Disconnected from WebSocket server:', reason);
                 if (reason === 'io server disconnect') {
-                    // Server disconnected, try to reconnect
                     socket.connect();
                 } else {
-                    // Client disconnected, fallback to polling
                     state.updateInterval = 10000;
                 }
             });
@@ -486,14 +568,11 @@
             });
 
             socket.on('server-details-update', (data) => {
-                console.log('Received server details update:', data);
                 const { serverId, logs, players, config } = data;
 
                 if (serverId === state.selectedServer) {
-                    // Store current scroll positions before updating
                     storeScrollPositions();
 
-                    // Check which data actually changed based on current tab
                     let dataChanged = false;
 
                     if (state.activeTab === 'dashboard' || state.activeTab === 'console') {
@@ -507,7 +586,7 @@
                         if (JSON.stringify(state.players) !== JSON.stringify(players)) {
                             state.players = players;
                             dataChanged = true;
-                            state.forceFullRender = true; // Force full render to update tab labels
+                            state.forceFullRender = true;
                         }
                     }
 
@@ -518,15 +597,53 @@
                         }
                     }
 
-                    // Always re-render for WebSocket updates to ensure UI reflects changes
                     if (dataChanged) {
-                        console.log('🔄 Re-rendering UI due to WebSocket update');
-                        // Force full render for WebSocket updates to ensure all UI elements update immediately
                         state.forceFullRender = true;
                         render();
-                        renderSidebar(); // Update sidebar in case player count changed
-                        // Restore scroll positions after render is complete
+                        renderSidebar();
                         setTimeout(restoreScrollPositions, 100);
+                    }
+                }
+            });
+
+            socket.on('upload-progress', (data) => {
+                const { serverId, status, filename, progress, size, duration, error } = data;
+
+                if (serverId === state.selectedServer) {
+                    const progressDiv = document.getElementById('uploadProgress');
+                    const progressText = document.getElementById('uploadProgressText');
+                    const progressBar = document.getElementById('uploadProgressBar');
+
+                    if (status === 'started') {
+                        if (progressDiv && progressText && progressBar) {
+                            progressDiv.classList.remove('hidden');
+                            progressText.textContent = `Starting upload: ${filename} (${formatBytes(size || 0)})`;
+                            progressBar.style.width = '0%';
+                            progressBar.style.backgroundColor = '#10b981';
+                        }
+                    } else if (status === 'processing') {
+                        if (progressText) progressText.textContent = `Processing ${filename}: ${progress}% complete`;
+                        if (progressBar) progressBar.style.width = `${progress}%`;
+                    } else if (status === 'completed') {
+                        if (progressText) progressText.textContent = `Upload completed: ${filename} (${duration}ms)`;
+                        if (progressBar) progressBar.style.width = '100%';
+                        setTimeout(() => {
+                            if (progressDiv) progressDiv.classList.add('hidden');
+                            if (progressBar) progressBar.style.width = '0%';
+                        }, 3000);
+                    } else if (status === 'error') {
+                        if (progressText) progressText.textContent = `Upload failed: ${filename} - ${error}`;
+                        if (progressBar) {
+                            progressBar.style.width = '0%';
+                            progressBar.style.backgroundColor = '#dc2626';
+                        }
+                        setTimeout(() => {
+                            if (progressDiv) progressDiv.classList.add('hidden');
+                            if (progressBar) {
+                                progressBar.style.width = '0%';
+                                progressBar.style.backgroundColor = '#10b981';
+                            }
+                        }, 5000);
                     }
                 }
             });
@@ -591,11 +708,9 @@
         async function fetchServerDetails() {
             if (!state.selectedServer) return;
 
-            // Store current scroll positions before updating
             storeScrollPositions();
 
             try {
-                // Always fetch fresh data for the current active tab - no caching for accuracy
                 const fetchPromises = [];
 
                 // Always fetch logs for dashboard and console tabs
@@ -656,7 +771,6 @@
 
                 const [logs, files, backups, config, players, addons, worlds, addonConfig] = await Promise.all(fetchPromises);
 
-                // Always update state with fresh data
                 if (state.activeTab === 'dashboard' || state.activeTab === 'console') {
                     state.logs = logs;
                 }
@@ -675,7 +789,7 @@
 
                 if (state.activeTab === 'dashboard' || state.activeTab === 'players') {
                     state.players = players;
-                    state.forceFullRender = true; // Force full render to update tab labels
+                    state.forceFullRender = true;
                 }
 
                 if (state.activeTab === 'addons') {
@@ -684,10 +798,8 @@
                     state.config = addonConfig;
                 }
 
-                // Always re-render with fresh data
                 render();
-                renderSidebar(); // Update sidebar in case player count changed
-                // Restore scroll positions after render is complete
+                renderSidebar();
                 requestAnimationFrame(restoreScrollPositions);
 
             } catch (err) {
@@ -1353,7 +1465,27 @@
         async function uploadFiles() {
             const input = document.getElementById('uploadInput');
             const files = input.files;
+            const uploadBtn = document.getElementById('uploadFilesBtn');
+
             if (files.length === 0) return;
+
+            console.log('🚀 Starting file upload for', files.length, 'files');
+
+            // Disable button during upload
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Uploading...';
+
+            // Show progress in modal immediately
+            const progressDiv = document.getElementById('fileUploadProgress');
+            const progressText = document.getElementById('fileUploadProgressText');
+            const progressBar = document.getElementById('fileUploadProgressBar');
+
+            if (progressDiv && progressText && progressBar) {
+                console.log('📊 Showing file upload progress UI');
+                progressDiv.classList.remove('hidden');
+                progressText.textContent = `Preparing upload: ${files.length} file(s)`;
+                progressBar.style.width = '0%';
+            }
 
             const formData = new FormData();
             for (let file of files) {
@@ -1361,31 +1493,49 @@
             }
 
             try {
-                showLoading();
-                await fetch(`${API_BASE}/servers/${state.selectedServer}/files/upload?path=${state.currentPath}`, {
+                const response = await fetch(`${API_BASE}/servers/${state.selectedServer}/files/upload?path=${state.currentPath}`, {
                     method: 'POST',
                     body: formData
                 });
-                closeModal('uploadModal');
-                input.value = '';
-                await fetchServerDetails();
-                hideLoading();
-                Swal.fire({
-                    title: 'Success',
-                    text: 'Files uploaded successfully!',
-                    icon: 'success',
-                    confirmButtonColor: '#10b981',
-                    timer: 2000,
-                    timerProgressBar: true
-                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    console.log('✅ File upload successful');
+                    closeModal('uploadModal');
+                    input.value = '';
+                    await fetchServerDetails();
+                    Swal.fire({
+                        title: 'Success',
+                        text: 'Files uploaded successfully!',
+                        icon: 'success',
+                        confirmButtonColor: '#10b981',
+                        timer: 2000,
+                        timerProgressBar: true
+                    });
+                } else {
+                    throw new Error(result.error || 'Upload failed');
+                }
             } catch (err) {
-                hideLoading();
+                console.error('❌ File upload error:', err);
                 Swal.fire({
                     title: 'Error',
                     text: 'Upload failed: ' + err.message,
                     icon: 'error',
                     confirmButtonColor: '#10b981'
                 });
+            } finally {
+                // Re-enable button
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Upload';
+
+                // Hide progress if still visible
+                if (progressDiv) {
+                    setTimeout(() => {
+                        progressDiv.classList.add('hidden');
+                        if (progressBar) progressBar.style.width = '0%';
+                    }, 1000);
+                }
             }
         }
 
@@ -1685,7 +1835,6 @@
             const input = document.getElementById('addonUploadInput');
             const file = input.files[0];
             const uploadBtn = document.getElementById('uploadAddonBtn');
-            const progressDiv = document.getElementById('uploadProgress');
 
             if (!file) {
                 Swal.fire({
@@ -1697,10 +1846,18 @@
                 return;
             }
 
-            // Show progress spinner and disable button
-            progressDiv.classList.remove('hidden');
             uploadBtn.disabled = true;
             uploadBtn.textContent = 'Uploading...';
+
+            const progressDiv = document.getElementById('uploadProgress');
+            const progressText = document.getElementById('uploadProgressText');
+            const progressBar = document.getElementById('uploadProgressBar');
+
+            if (progressDiv && progressText && progressBar) {
+                progressDiv.classList.remove('hidden');
+                progressText.textContent = `Preparing upload: ${file.name} (${formatBytes(file.size)})`;
+                progressBar.style.width = '0%';
+            }
 
             const formData = new FormData();
             formData.append('addon', file);
@@ -1714,26 +1871,38 @@
                 const result = await response.json();
 
                 if (response.ok) {
-                    closeModal('addonUploadModal');
                     input.value = '';
                     await fetchServerDetails();
-                    Swal.fire({
-                        title: 'Success',
-                        html: `✅ ${result.filename} uploaded successfully!<br><br>Type: ${result.type}<br><br>${result.type === 'mcworld' || result.type === 'mctemplate' ? 'World uploaded to worlds folder.' : 'Enable the addon below and restart the server to apply changes.'}`,
-                        icon: 'success',
-                        confirmButtonColor: '#10b981'
-                    });
+                    setTimeout(() => {
+                        closeModal('addonUploadModal');
+                        Swal.fire({
+                            title: 'Success',
+                            html: `${result.filename} uploaded successfully!<br><br>Type: ${result.type}<br><br>${result.type === 'mcworld' || result.type === 'mctemplate' ? 'World uploaded to worlds folder.' : 'Enable the addon below and restart the server to apply changes.'}`,
+                            icon: 'success',
+                            confirmButtonColor: '#10b981'
+                        });
+                    }, 2000);
                 } else {
                     throw new Error(result.error || 'Upload failed');
                 }
             } catch (err) {
-                alert('❌ Upload failed: ' + err.message);
                 console.error('Upload error:', err);
+                Swal.fire({
+                    title: 'Upload Failed',
+                    text: 'Upload failed: ' + err.message,
+                    icon: 'error',
+                    confirmButtonColor: '#10b981'
+                });
             } finally {
-                // Hide progress spinner and re-enable button
-                progressDiv.classList.add('hidden');
                 uploadBtn.disabled = false;
                 uploadBtn.textContent = 'Upload';
+
+                if (progressDiv) {
+                    setTimeout(() => {
+                        progressDiv.classList.add('hidden');
+                        if (progressBar) progressBar.style.width = '0%';
+                    }, 1000);
+                }
             }
         }
 
@@ -2549,19 +2718,16 @@
         }
 
         function selectServer(id) {
-            // If switching to a different server, reset to dashboard tab
             if (state.selectedServer !== id) {
                 state.activeTab = 'dashboard';
-                state.forceFullRender = true; // Force full render when switching servers
+                state.forceFullRender = true;
             }
             state.selectedServer = id;
             renderSidebar();
-            render(); // Update main content immediately with new server info
+            render();
 
-            // Fetch fresh server data - no caching for accuracy
             fetchServerDetails();
 
-            // Close sidebar on mobile after selecting server
             if (window.innerWidth <= 768) {
                 const sidebar = document.getElementById('sidebar');
                 const overlay = document.getElementById('sidebarOverlay');
@@ -2572,21 +2738,14 @@
             }
         }
 
-        // Removed caching - always fetch fresh data for accuracy
-        // WebSocket handles real-time updates
-
         function switchTab(tab) {
             state.activeTab = tab;
-            // Update tab button styles
             updateTabStyles();
 
-            // Always fetch fresh data for accuracy - no caching
-            console.log(`📡 Fetching fresh data for tab: ${tab}`);
             fetchServerDetails().then(() => {
                 render();
             });
 
-            // Close sidebar on mobile after selecting tab
             if (window.innerWidth <= 768) {
                 const sidebar = document.getElementById('sidebar');
                 const overlay = document.getElementById('sidebarOverlay');
@@ -2595,12 +2754,6 @@
                     overlay.classList.remove('active');
                 }
             }
-        }
-
-        function checkIfTabNeedsFetch(tab) {
-            // No caching - always fetch fresh data for accuracy
-            // WebSocket handles real-time updates
-            return true;
         }
 
         function updateTabStyles() {
@@ -2620,8 +2773,6 @@
         function switchAddonTab(tab) {
             state.activeAddonTab = tab;
             updateAddonTabStyles();
-            // Always fetch fresh data for accuracy
-            console.log(`📡 Switching to addon sub-tab: ${tab}`);
             fetchServerDetails().then(() => {
                 render();
             });
