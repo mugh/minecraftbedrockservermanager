@@ -13,7 +13,8 @@ The aplication will deploy a minecraft bedrock server using docker itzg/docker-m
 - ✅ Select server version (Latest, Latest Preview or custom)
 - ✅ Start/Stop/Restart containers
 - ✅ Server renaming
-- ✅ Console commands
+- ✅ Console command
+- ✅ Allocate container memory/ram
 - ✅ Advanced File Manager
   - Upload multiple files
   - Download files
