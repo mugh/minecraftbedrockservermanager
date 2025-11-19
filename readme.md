@@ -211,7 +211,8 @@ networks:
 You can customize the deployment by editing the `docker-compose.yml` file:
 - `LOGIN_PASSWORD`: Set your desired password
 - `PORT`: Change the port if needed (default: 3001)
-- `DATA_DIR`: Already set to `/app/minecraft-data` inside container
+- `MAX_LOGIN_ATTEMPTS`: Maximum failed login attempt
+- `LOGIN_LOCKOUT_MINUTES`: duration of lockout in case or reaching MAX_LOGIN_ATTEMPTS
 
 #### Volumes
 - `minecraft-data`: Persistent storage for Minecraft server data
@@ -228,6 +229,7 @@ You can customize the deployment by editing the `docker-compose.yml` file:
 ![enter image description here](https://github.com/mugh/minecraftbedrockservermanager/blob/main/Screenshot/sc2.png?raw=true)
 ![enter image description here](https://github.com/mugh/minecraftbedrockservermanager/blob/main/Screenshot/sc3.png?raw=true)
 ![enter image description here](https://github.com/mugh/minecraftbedrockservermanager/blob/main/Screenshot/sc4.png?raw=true)
+
 
 
 
