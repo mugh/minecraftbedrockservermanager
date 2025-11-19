@@ -173,7 +173,7 @@ npm start
 - Docker installed
 - Docker Compose installed
 
-See project on https://github.com/mugh/minecraft-bedrock-server-manager
+Image : https://hub.docker.com/r/mugh/bdsmanagerforitzg
 
 ### Docker Compose Example
 ---
@@ -228,6 +228,7 @@ You can customize the deployment by editing the `docker-compose.yml` file:
 ![enter image description here](https://github.com/mugh/minecraftbedrockservermanager/blob/main/Screenshot/sc2.png?raw=true)
 ![enter image description here](https://github.com/mugh/minecraftbedrockservermanager/blob/main/Screenshot/sc3.png?raw=true)
 ![enter image description here](https://github.com/mugh/minecraftbedrockservermanager/blob/main/Screenshot/sc4.png?raw=true)
+
 
 
 
