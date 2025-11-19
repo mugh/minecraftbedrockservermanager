@@ -61,8 +61,6 @@ This application uses WebSocket for real-time updates, providing instant UI sync
 #### Prerequisites
 - Docker installed
 - Node.js 18+
-- Tested on Linux (Ubuntu & Debian)
-- Windows using docker
 
 Download the source  code
 
