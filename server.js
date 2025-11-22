@@ -2193,31 +2193,47 @@ app.delete('/api/servers/:id/addons/:type/:name', async (req, res) => {
   try {
     const { type, name } = req.params;
     const paths = getAddonPaths(req.params.id);
-    
-    const packPath = type === 'behavior' 
+
+    const packPath = type === 'behavior'
       ? path.join(paths.behaviorPacks, name)
       : path.join(paths.resourcePacks, name);
-    
+
     if (!await fs.pathExists(packPath)) {
       return res.status(404).json({ error: 'Addon not found' });
     }
-    
+
+    // Read manifest to get UUID before deleting
+    let uuid = null;
+    const manifestPath = path.join(packPath, 'manifest.json');
+    if (await fs.pathExists(manifestPath)) {
+      try {
+        const manifest = await parseManifestJson(manifestPath);
+        uuid = manifest?.header?.uuid || null;
+      } catch (err) {
+        console.warn(`Failed to parse manifest for ${name}:`, err.message);
+        // Continue with deletion even if manifest can't be parsed
+      }
+    }
+
+    // Remove from world config if enabled and we have UUID
+    if (uuid) {
+      const worldName = await getWorldName(req.params.id);
+      const worldPath = path.join(paths.worlds, worldName);
+      const configFile = type === 'behavior'
+        ? path.join(worldPath, 'world_behavior_packs.json')
+        : path.join(worldPath, 'world_resource_packs.json');
+
+      if (await fs.pathExists(configFile)) {
+        let packs = await fs.readJson(configFile);
+        // Remove the pack from config if it exists
+        packs = packs.filter(p => p.pack_id !== uuid);
+        await fs.writeJson(configFile, packs, { spaces: 2 });
+      }
+    }
+
     // Remove from filesystem
     await fs.remove(packPath);
-    
-    // Remove from world config if enabled
-    const worldName = await getWorldName(req.params.id);
-    const worldPath = path.join(paths.worlds, worldName);
-    const configFile = type === 'behavior' 
-      ? path.join(worldPath, 'world_behavior_packs.json')
-      : path.join(worldPath, 'world_resource_packs.json');
-    
-    if (await fs.pathExists(configFile)) {
-      let packs = await fs.readJson(configFile);
-      // We can't filter by UUID since we deleted the manifest, so we'll keep the config as-is
-      // The server will ignore missing packs
-    }
-    
+
     res.json({ message: 'Addon deleted successfully' });
   } catch (err) {
     console.error('Error deleting addon:', err);
