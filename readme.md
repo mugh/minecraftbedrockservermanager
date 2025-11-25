@@ -29,10 +29,8 @@ The aplication will deploy a minecraft bedrock server using docker itzg/docker-m
   - Keyboard shortcuts
 - ✅ Addon Management
   - Upload .mcaddon, .mcpack, .mcworld, .mctemplate files
-  - Enable/disable behavior packs
-  - Enable/disable resource packs
+  - Enable/disable addon
   - Automatic manifest parsing
-  - World configuration management
   - View installed worlds
   - Switch between worlds
   - Delete worlds
@@ -45,6 +43,13 @@ The aplication will deploy a minecraft bedrock server using docker itzg/docker-m
 - ✅ Session-based authentication
 - ✅ Mobile responsive design
 
+
+### Addon Management Updates
+
+**Combined Addon List System**
+- Addons are now displayed as a unified list instead of separate behavior and resource pack tabs
+- Each addon shows type indicators: `BP` (Behavior Pack), `RP` (Resource Pack), or `BP + RP` (both types)
+- Enable/disable and delete operations work on both pack types simultaneously
 
 
 ### WebSocket Real-time Features

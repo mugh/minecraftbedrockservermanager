@@ -518,7 +518,7 @@
           servers: [],
           selectedServer: null,
           activeTab: 'dashboard',
-          activeAddonTab: 'behavior',
+          activeAddonTab: 'addons',
           logs: [],
           files: [],
           backups: [],
@@ -531,7 +531,7 @@
           scrollPositions: {},
           lastUpdate: 0,
           updateInterval: 30000, // Reduced polling interval as backup (30 seconds)
-          addons: { behaviorPacks: [], resourcePacks: [] },
+          addons: [],
           worlds: [],
           forceFullRender: false,
           lastActionServer: null
@@ -769,9 +769,9 @@
 
                 // Fetch addons only for addons tab
                 if (state.activeTab === 'addons') {
-                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/addons`).then(r => r.json()).catch(() => ({ behaviorPacks: [], resourcePacks: [] })));
+                    fetchPromises.push(fetch(`${API_BASE}/servers/${state.selectedServer}/addons`).then(r => r.json()).catch(() => []));
                 } else {
-                    fetchPromises.push(Promise.resolve({ behaviorPacks: [], resourcePacks: [] }));
+                    fetchPromises.push(Promise.resolve([]));
                 }
 
                 // Fetch worlds only for addons tab (worlds are part of addons)
@@ -2082,10 +2082,10 @@
             }
         }
 
-        async function toggleAddon(type, name) {
+        async function toggleAddon(name) {
             try {
                 showLoading();
-                const response = await fetch(`${API_BASE}/servers/${state.selectedServer}/addons/${type}/${encodeURIComponent(name)}/toggle`, {
+                const response = await fetch(`${API_BASE}/servers/${state.selectedServer}/addons/${encodeURIComponent(name)}/toggle`, {
                     method: 'POST'
                 });
 
@@ -2116,7 +2116,7 @@
             }
         }
 
-        async function deleteAddon(type, name) {
+        async function deleteAddon(name) {
             const result = await Swal.fire({
                 title: 'Delete Addon',
                 text: `Delete ${name}? This will permanently remove the addon from the server.`,
@@ -2130,7 +2130,7 @@
 
             try {
                 showLoading();
-                const response = await fetch(`${API_BASE}/servers/${state.selectedServer}/addons/${type}/${encodeURIComponent(name)}`, {
+                const response = await fetch(`${API_BASE}/servers/${state.selectedServer}/addons/${encodeURIComponent(name)}`, {
                     method: 'DELETE'
                 });
 
@@ -2684,93 +2684,80 @@
 
                             <!-- Addon Tabs -->
                             <div class="bg-gray-800 border-b border-gray-700 px-4 flex gap-2 overflow-x-auto whitespace-nowrap">
-                                ${['behavior', 'resource', 'world'].map(tab => `
+                                ${['addons', 'worlds'].map(tab => `
                                     <button
                                         onclick="switchAddonTab('${tab}')"
                                         class="px-3 py-2 text-xs md:text-sm capitalize flex-shrink-0 ${state.activeAddonTab === tab ? 'tab-active' : 'text-gray-400 hover:text-gray-200'}">
-                                        ${tab === 'behavior' ? '🎮 Behavior Packs' : tab === 'resource' ? '🎨 Resource Packs' : '🌍 Worlds'}
+                                        ${tab === 'addons' ? '📦 Addons' : '🌍 Worlds'}
                                     </button>
                                 `).join('')}
                             </div>
 
                             <!-- Tab Content -->
                             <div class="bg-gray-800 rounded-lg p-4">
-                                ${state.activeAddonTab === 'behavior' ? `
-                                    <h3 class="text-base font-semibold mb-3">🎮 Behavior Packs</h3>
-                                    ${state.addons.behaviorPacks.length === 0 ? `
+                                ${state.activeAddonTab === 'addons' ? `
+                                    <h3 class="text-base font-semibold mb-3">📦 Addons</h3>
+                                    ${state.addons.length === 0 ? `
                                         <div class="text-center py-6 text-gray-500">
                                             <div class="text-3xl mb-2">📦</div>
-                                            <div class="text-sm">No behavior packs installed</div>
+                                            <div class="text-sm">No addons installed</div>
                                         </div>
                                     ` : `
                                         <div class="space-y-2">
-                                            ${state.addons.behaviorPacks.map(pack => `
+                                            ${state.addons.map(addon => {
+                                                const hasBehavior = addon.behaviorPack !== null;
+                                                const hasResource = addon.resourcePack !== null;
+                                                const behaviorEnabled = addon.behaviorPack?.enabled || false;
+                                                const resourceEnabled = addon.resourcePack?.enabled || false;
+                                                const isEnabled = behaviorEnabled || resourceEnabled;
+
+                                                let typeTags = [];
+                                                if (hasBehavior && hasResource) {
+                                                    typeTags.push('<span class="px-2 py-0.5 text-xs bg-purple-600 rounded">BP + RP</span>');
+                                                } else if (hasBehavior) {
+                                                    typeTags.push('<span class="px-2 py-0.5 text-xs bg-blue-600 rounded">BP</span>');
+                                                } else if (hasResource) {
+                                                    typeTags.push('<span class="px-2 py-0.5 text-xs bg-green-600 rounded">RP</span>');
+                                                }
+
+                                                return `
                                                 <div class="p-3 bg-gray-900 rounded-lg">
                                                     <div class="flex items-start justify-between gap-3">
                                                         <div class="flex-1 min-w-0">
                                                             <div class="flex items-center gap-2 mb-1">
-                                                                <span class="font-medium text-sm truncate">${pack.name}</span>
-                                                                ${pack.enabled ? '<span class="px-2 py-0.5 text-xs bg-green-600 rounded">✓ Enabled</span>' : '<span class="px-2 py-0.5 text-xs bg-gray-600 rounded">Disabled</span>'}
+                                                                <span class="font-medium text-sm truncate">${addon.name}</span>
+                                                                ${typeTags.join('')}
+                                                                ${isEnabled ? '<span class="px-2 py-0.5 text-xs bg-green-600 rounded">✓ Enabled</span>' : '<span class="px-2 py-0.5 text-xs bg-gray-600 rounded">Disabled</span>'}
                                                             </div>
-                                                            ${pack.description ? `<div class="text-xs text-gray-400 mb-1">${pack.description}</div>` : ''}
                                                             <div class="text-xs text-gray-500">
-                                                                ${pack.version ? `v${pack.version.join('.')} • ` : ''}${formatBytes(pack.size)} • ${new Date(pack.modified).toLocaleDateString()}
+                                                                ${addon.behaviorPack?.version ? `BP v${addon.behaviorPack.version.join('.')} • ` : ''}
+                                                                ${addon.resourcePack?.version ? `RP v${addon.resourcePack.version.join('.')} • ` : ''}
+                                                                ${formatBytes(Math.max(addon.behaviorPack?.size || 0, addon.resourcePack?.size || 0))} •
+                                                                ${(() => {
+                                                                    const bpDate = addon.behaviorPack?.modified ? new Date(addon.behaviorPack.modified) : null;
+                                                                    const rpDate = addon.resourcePack?.modified ? new Date(addon.resourcePack.modified) : null;
+                                                                    const latestDate = bpDate && rpDate ? new Date(Math.max(bpDate.getTime(), rpDate.getTime())) :
+                                                                                   bpDate || rpDate || new Date();
+                                                                    return latestDate.toLocaleDateString();
+                                                                })()}
                                                             </div>
                                                         </div>
                                                         <div class="flex gap-1.5 flex-shrink-0">
                                                             <button
-                                                                onclick="toggleAddon('behavior', '${pack.name}')"
-                                                                class="px-3 py-1.5 text-xs ${pack.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} rounded-lg whitespace-nowrap">
-                                                                ${pack.enabled ? '⏸️ Disable' : '▶️ Enable'}
+                                                                onclick="toggleAddon('${addon.name}')"
+                                                                class="px-3 py-1.5 text-xs ${isEnabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} rounded-lg whitespace-nowrap">
+                                                                ${isEnabled ? '⏸️ Disable' : '▶️ Enable'}
                                                             </button>
                                                             <button
-                                                                onclick="deleteAddon('behavior', '${pack.name}')"
+                                                                onclick="deleteAddon('${addon.name}')"
                                                                 class="px-2 py-1.5 text-xs bg-red-600 hover:bg-red-700 rounded-lg">
                                                                 🗑️
                                                             </button>
                                                         </div>
                                                     </div>
                                                 </div>
-                                            `).join('')}
-                                        </div>
-                                    `}
-                                ` : state.activeAddonTab === 'resource' ? `
-                                    <h3 class="text-base font-semibold mb-3">🎨 Resource Packs</h3>
-                                    ${state.addons.resourcePacks.length === 0 ? `
-                                        <div class="text-center py-6 text-gray-500">
-                                            <div class="text-3xl mb-2">🎨</div>
-                                            <div class="text-sm">No resource packs installed</div>
-                                        </div>
-                                    ` : `
-                                        <div class="space-y-2">
-                                            ${state.addons.resourcePacks.map(pack => `
-                                                <div class="p-3 bg-gray-900 rounded-lg">
-                                                    <div class="flex items-start justify-between gap-3">
-                                                        <div class="flex-1 min-w-0">
-                                                            <div class="flex items-center gap-2 mb-1">
-                                                                <span class="font-medium text-sm truncate">${pack.name}</span>
-                                                                ${pack.enabled ? '<span class="px-2 py-0.5 text-xs bg-green-600 rounded">✓ Enabled</span>' : '<span class="px-2 py-0.5 text-xs bg-gray-600 rounded">Disabled</span>'}
-                                                            </div>
-                                                            ${pack.description ? `<div class="text-xs text-gray-400 mb-1">${pack.description}</div>` : ''}
-                                                            <div class="text-xs text-gray-500">
-                                                                ${pack.version ? `v${pack.version.join('.')} • ` : ''}${formatBytes(pack.size)} • ${new Date(pack.modified).toLocaleDateString()}
-                                                            </div>
-                                                        </div>
-                                                        <div class="flex gap-1.5 flex-shrink-0">
-                                                            <button
-                                                                onclick="toggleAddon('resource', '${pack.name}')"
-                                                                class="px-3 py-1.5 text-xs ${pack.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} rounded-lg whitespace-nowrap">
-                                                                ${pack.enabled ? '⏸️ Disable' : '▶️ Enable'}
-                                                            </button>
-                                                            <button
-                                                                onclick="deleteAddon('resource', '${pack.name}')"
-                                                                class="px-2 py-1.5 text-xs bg-red-600 hover:bg-red-700 rounded-lg">
-                                                                🗑️
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            `).join('')}
+                                                `;
+                                            }).join('')}
                                         </div>
                                     `}
                                 ` : `
